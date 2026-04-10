@@ -1,0 +1,18 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+cmd = "go build -o ./tmp/main ./cmd/agentic-job-search"
+bin = "./tmp/main"
+include_ext = ["go", "tpl", "tmpl", "html", "md"]
+exclude_dir = ["assets", "tmp", "vendor", "docs", "_bmad", "_bmad-output", "queued_resume", "data", "potential-jobs"]
+delay = 1000
+
+[log]
+time = false
+
+[color]
+main = "magenta"
+watcher = "cyan"
+build = "yellow"
+runner = "green"

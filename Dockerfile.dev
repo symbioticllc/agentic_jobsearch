@@ -1,0 +1,16 @@
+FROM golang:1.25-alpine
+
+# Install git, curl, and required build tools
+RUN apk add --no-cache git curl build-base
+
+# Set the Current Working Directory inside the container
+WORKDIR /app
+
+# Install air for hot-reloading
+RUN go install github.com/air-verse/air@latest
+
+# The source code will be mounted here
+COPY . .
+
+# Run air to start the app and watch for changes
+CMD ["air", "-c", ".air.toml"]

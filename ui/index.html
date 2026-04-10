@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agentic Job Search</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="index.css">
+    
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <script src="https://unpkg.com/html-docx-js/dist/html-docx.js"></script>
+</head>
+<body>
+    <div class="background-blobs">
+        <div class="blob blob-1"></div>
+        <div class="blob blob-2"></div>
+    </div>
+
+    <main class="app-container">
+        <header class="glass-header">
+            <div class="logo-area">
+                <h1>Agentic Job Search <span>v1.0</span></h1>
+            </div>
+            
+            <div class="global-search-container">
+                <div class="search-bar-input-wrapper">
+                    <span class="search-bar-icon">✨</span>
+                    <input type="text" id="semantic-search-input" placeholder="Semantic search... (e.g. requires deep Go knowledge)">
+                </div>
+                <button id="semantic-search-btn" class="primary-btn search-submit-btn">Search</button>
+                <button id="clear-search-btn" class="secondary-btn" style="display:none;">Clear</button>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-end;">
+                <label style="color: var(--text-muted); font-size: 0.8rem; display: flex; align-items: center; gap: 0.35rem; cursor: pointer;">
+                    <input type="checkbox" id="scrape-exec-toggle" style="accent-color: #3b82f6;"> Scan Executive Roles
+                </label>
+                <div style="display: flex; gap: 0.5rem;">
+                    <button id="stop-scrape-btn" class="secondary-btn" style="display:none; color: #ef4444; border-color: rgba(239, 68, 68, 0.3); background: rgba(239, 68, 68, 0.05);">
+                        <span class="icon">🛑</span> Stop
+                    </button>
+                    <button id="scrape-btn" class="primary-btn">
+                        <span class="icon">🔍</span> Scrape New Jobs
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <section class="content-split">
+            <aside class="job-list-pane glass-panel">
+                <div class="pane-header" style="flex-direction: column; align-items: stretch; gap: 1rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <h2>Potential Jobs</h2>
+                        <span id="job-count" class="badge">0</span>
+                    </div>
+                    <div class="comp-filter-container">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                            <label for="min-comp-slider" style="font-size: 0.85rem; color: var(--text-muted);">Min. Compensation</label>
+                            <span id="min-comp-display" style="font-size: 0.85rem; font-weight: 600; color: #10b981;">$0</span>
+                        </div>
+                        <input type="range" id="min-comp-slider" min="0" max="400000" step="10000" value="0" class="premium-slider">
+                    </div>
+                </div>
+                <div class="job-list" id="job-list">
+                    <!-- Job items will be injected here -->
+                    <div class="empty-state">Loading jobs...</div>
+                </div>
+            </aside>
+
+            <article class="job-detail-pane glass-panel">
+                <div class="pane-header">
+                    <h2>Analysis & Resume</h2>
+                </div>
+                <div class="job-detail-content" id="job-detail-content">
+                    <div class="empty-state">Select a job to view details or tailor your resume.</div>
+                </div>
+            </article>
+        </section>
+    </main>
+
+    <!-- Resume Export Modal -->
+    <dialog id="resume-modal" class="glass-modal">
+        <div class="modal-content">
+            <header class="modal-header">
+                <h2>Tailored Resume Preview</h2>
+                <button id="close-modal-btn" class="close-btn">&times;</button>
+            </header>
+            
+            <div class="modal-actions">
+                <button id="export-pdf-btn" class="primary-btn"><span class="icon">📄</span> Export PDF</button>
+                <button id="export-docx-btn" class="primary-btn" style="background:#2563eb;"><span class="icon">📝</span> Download Word</button>
+                <button id="export-gdocs-btn" class="secondary-btn" style="color:#10b981; border-color: rgba(16, 185, 129, 0.4);"><span class="icon">☁️</span> Save to Google Docs</button>
+            </div>
+
+            <div class="modal-body-scroll" id="resume-print-area">
+                <div id="tailored-resume-html" class="resume-sheet">
+                    <!-- Rendered markdown injected here -->
+                </div>
+            </div>
+        </div>
+    </dialog>
+
+    <script src="app.js?v=2"></script>
+</body>
+</html>

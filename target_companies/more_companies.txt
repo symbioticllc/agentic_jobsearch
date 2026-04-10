@@ -1,0 +1,610 @@
+3D Systems
+3Play Media
+A Cloud Guru | A Pluralsight Company
+AEA - Association of Enterprise Architects
+AI Ready RVA
+AIRO Group
+AMAZE
+APC by Schneider Electric
+ASML Holding
+AT&T
+Abra
+Accenture
+AccuWeather
+Acoer
+Activision Blizzard
+Acxiom
+Adobe
+Aerospike
+Aerospike EMEA
+Affirm
+Afilias
+Aklivity
+Akool
+Alibaba
+Alien Technology
+Allegis Group
+Ally
+Alphabet
+Altice Europe
+Amazing Engineering
+Amazon
+Ambiq Micro
+American Banker
+American Bankers Association
+American Express
+América Móvil
+Anacomp
+Analog Devices
+Anomaly Six
+Anthropic
+Apple
+Apple Inc.
+Applico
+Applied Materials
+Applied Minds
+Ardoq
+Argonide
+Arm
+ArrayFire
+Ascent Solar
+Astrotech Corporation
+Atlantic Union Bank
+Atlas Technica
+Augmate
+Automated Grading Systems, Inc.
+Automated Insights
+Automatic Data Processing
+Autonomous Solutions
+AvalonBay Communities
+Aventura Technologies
+A–E
+BCE
+BT Group
+BTEX, LLC
+Backbone Labs
+Baidu
+Bandwidth Inc.
+BankUnited
+Berkley One (a Berkley Company)
+Berkley Technology Services
+Binance
+Bio-Rad Laboratories
+BitGo
+Bitcoin Treasuries
+Bitso
+Bitso Brasil
+Blackbird.AI
+Block Party
+Blockchain Arbitration & Commerce Society
+Blockdaemon
+Blockverify
+Blockvest LLC
+Blue Cross NC
+BlueDolphin
+Boingo Wireless
+Booking Holdings
+Bossa Nova Robotics
+Bourns, Inc.
+Box, Inc.
+BrainStorm Inc.
+Bridgewater Associates
+Brink’s Inc
+Broadcom
+Bsquare
+Buckeye Global
+BuildingBlocs Literacy
+Buoyant
+Business Insider
+Business Intelligence
+Butlr Technologies
+CBRE
+CECO Environmental
+CGI
+CVS Health
+CalWave Power Technologies
+Candescent
+Canon
+Cantaloupe, Inc.
+CapCenter
+Caper AI
+Capgemini
+Capital One
+Capital One Business
+Capital One Software
+Carahsoft
+Cardinal Health
+Cato Networks
+Cellport Systems
+Celsius
+Centrical
+Chainalysis
+Charles Schwab
+Chase
+ChatGPT
+Cherry AG
+China Mobile
+China Telecom
+China Tower Corp.
+China Unicom
+Ciklum
+Cincom Systems
+Circle
+Cisco Systems
+Citi
+Claude
+CleverTap
+CloudBees
+Cloudflare
+Cloudscockpit
+Cloudways
+Coderio Software Company
+Cognizant
+Coinbase
+Coinmarketcap
+Cointelegraph
+Cologix
+Commodity Cables, Inc.
+CompuCom Systems
+Computer Support Services
+Conduktor
+Confidential Careers
+Confluent
+Connect Wealth
+Consulting and Strategy Group at VCU 
+Corning
+Cowen Inc.
+Cross-functional Team Leadership
+CrowdOptic
+Crypto.com
+DB Networks
+DISH Network
+DXC Technology
+Dale WorkForce Solutions
+DataDome
+DataTreasury
+Daylight Computer Co.
+Deep Web Technologies
+DeepScale
+Dell
+Deloitte
+Deque Systems
+Deutsche Telekom
+Devar Entertainment
+Dice
+DigiInfoPK
+Digital Keystone
+Dioxycle
+Discover
+Discover Financial Services
+Dispersion Technology
+Distillery
+Dometic
+Don Reid Properties
+Dosmatic U.S.A.
+Dremio
+EA Principals
+EAB
+Eagle Eye Networks
+Eagle Fire Inc.
+Ebix
+Eisen
+Enterprise Resource Planning (ERP)
+EquipmentShare
+Ericsson
+Etisalat
+Evolve Bank & Trust
+Experian
+Experis
+EyeMail
+Eyeris
+FIA Consulting Services
+FICO
+FINRA
+FIS
+Facebook
+Famigo
+FedPayments Improvement
+Federal Deposit Insurance Corporation (FDIC)
+Federal Reserve Financial Services
+Federal Reserve System
+Ferrer-Bonsoms & Sanjurjo, Abogados
+Fidelis Education
+Fidelity Investments
+Fidelity National Information
+Finextra
+FintechOS
+Fireblocks
+First Republic
+Fiserv
+Flatlands Press
+FlexGen Power Systems
+Flock Safety
+FluentPet
+Forbes
+Fortive
+FreeWave Technologies
+Freefly Systems
+Fujitsu
+Fuse Capital
+Fuse Energy Technologies Corporation
+F–L
+GE Vernova's Grid Software
+GE Vernova's Power & Energy Resources Software
+GEICO
+GTECH Corporation
+Gadget Flow
+Gartner
+Gary Sinise Foundation
+Georgia Institute of Technology
+GestureTek
+GitLab
+Gladinet
+Glean Technologies
+Glenbrook Partners
+Google Cloud
+Graphiq
+Graphyte
+Graylog
+Group14 Technologies
+Grubel Group - Bolst
+Gusto, Inc.
+HCL Global Systems Inc
+HFA
+HP Inc.
+Happiest Minds Technologies
+Harvard Business School
+HashTag Growth
+Hashgraph
+Helion Energy
+Hewlett Packard Enterprise
+Holobuilder
+Hon Hai Precision
+Hoox
+Hugging Face
+Hyperloop One
+Hyperloop Transportation Technologies
+IBM
+IDroid USA
+IMPACT Payments Recruiting
+INSIDER LATAM
+ION Geophysical
+IQ Business Group
+IRIS Business Architect Software Application
+ISACA
+ISC2
+Iasa Global
+Impact Makers
+Independent Consultant
+Industrial Defender
+Information Technology
+Infosys
+Innova Solutions
+Innovecs
+Inovalon
+Insight Technology
+Intel
+Intelisys
+Intellect Design Arena Ltd
+International Automated Systems
+Ippon Technologies
+Ippon Technologies USA
+Itron
+J.P. Morgan Commercial and Investment Banking
+JD.com
+JLL
+JNBridge
+JPMorganChase
+Jack Henry
+Jaguar Building Services Ltd
+KDDI
+KPMG US
+KX Systems
+Kat Simons Foundation
+Keyence
+Keystone Nano
+Kigo
+Kinfos Events Private Limited
+Know Labs
+Kraken
+Kyndryl
+Kyocera
+LECO Corporation
+LEGO Group
+LINE5
+LVX
+Lam Research
+Lat-Lon, LLC
+Leadership First
+Leeds & Northrup
+Legend Holding
+Lenovo Group
+Lensa
+LevelUp
+LiveRamp
+Livescribe
+Loggly
+M&T Bank
+M3D, LLC
+M9 Solutions
+MBPassion.de – #1 Mercedes-Benz News Channel
+MEMX
+METER Group
+MIT Sloan School of Management
+MIT Technology Review
+MIT Technology Review (ES)
+MIT Technology Review Brasil
+Mack Security Group
+MagiQ Technologies, Inc.
+Magic Leap
+Markel
+Marqeta
+Mastercard
+Mastercard Insights & Intelligence
+Maverick Technologies
+MaxMyInterest
+Maxwell Technologies
+McAdam Financial
+McKesson
+Mechanical Engineering Learn
+Mercado Livre
+Mercado Pago
+Micron Technology
+Microsoft
+Microwave Data Systems
+Mini Sudoku, a puzzle by LinkedIn
+Mink Beauty
+Mitsubishi Electric
+Modular Mining Systems
+Moog Inc.
+MoonPay
+MulticoreWare
+Murata Manufacturing
+M–R
+N.F. Smith & Associates
+NEXT LEVEL Partners®, LLC
+NIMBUSAI TECH LLC
+NLB Services
+NVIDIA
+NXP Semiconductors
+Narrative Science
+Naspers
+Nasuni
+National Institute of Standards and Technology (NIST)
+National Instruments
+National Retail Solutions
+Nativex
+Natural Currents Energy Services
+NetEase
+Netco Government Services
+Netflix
+Newgen Software
+Nile
+Nimia
+Nintendo
+Nippon Telegraph & Tel
+Nokia
+OFS
+OMG
+Ocean Network Express
+Office of the Comptroller of the Currency
+OnDeck Capital
+Onanon
+OneReach.ai 
+OpenAI
+Oracle
+Orange
+Orbus Software
+Organization
+PHP
+PNC
+PYMNTS
+Panopto
+Patches, a puzzle by LinkedIn
+Paxos
+PayPal
+Paymerang, a Corpay Brand
+Peeple
+Penn State Smeal College of Business
+Penn State Smeal MBA Program
+Penn State THON™
+Penn State World Campus
+Performance Food Group
+PerkinElmer
+Persistent Systems
+PharmaSecure
+Philips
+Phoseon Technology
+Pillar Wealth Partners
+Pinpoint Systems Corporation
+PlanGrid
+Platform 3 Solutions
+Polygon Labs
+Pomelo
+Port of Context
+Portal A Interactive
+PrecisionHawk
+Proficy® from Velotic™
+PteroDynamics
+Purple Gold Partners
+PwC
+QED Investors
+Quake Global
+Qualcomm
+Quanta Credit Services, Inc
+Quantum World Technologies Inc.
+RAIC Labs
+RBC Capital Markets
+RCA Communication Systems
+Rakuten
+Random Ritual
+Randstad USA
+Rangle.io
+RapidSOS
+Recruit Holdings
+Redis
+Redpanda Data
+RemObjects Software
+Remote
+Renfro & Renfro, PLLC
+Research Frontiers
+Retell AI
+Revature
+Revel Systems
+Richmond United
+RightForge
+Ripple
+Rithum
+Riverbank Laboratories
+Rogers Communications
+Roper Technologies
+Rotas Security
+Round Here, LLC
+Rubicon Technology
+Runway
+S1 Corporation
+SAP
+SCYTHE
+SK Holdings
+SK Hynix
+SK Telecom
+SLI Systems
+Sadhguru (Unofficial Page)
+Salesforce.com
+Salisbury Country Club Ltd.
+Samsung Electronics
+Saudi Telecom
+ScaledLeverage
+Scrunch
+Securus Technologies
+Self-Employed Nanny
+Sensics
+Serve robotics
+Shri Krishna Wealth & Insurance Solutions, LLC
+Sifted
+Silverfort
+Simon Sinek's The Optimism Company
+SingTel
+Skylar Consulting
+Slyce
+SmartCAM
+SmartRecruiters
+SoFi
+Soft Skills For Architects (softskillsforarchitects.com)
+SoftServe
+Softbank
+Software Development Life Cycle (SDLC)
+Solace
+Solix Technologies, Inc.
+SoloPower Systems
+Solstar
+Solution Architecture
+Soundscape Harmony
+Sparx Systems
+Spectral Sciences Incorporated
+Splice
+SpreeAI
+Spring Labs
+Square
+Starlink
+Starschema
+Stealth Startup
+Stitch Fix
+Stonewater Partners
+Stratus Associates
+Stripe
+SuperFunnel
+Swisscom
+Synacor
+S–Z
+T-Mobile
+TE Connectivity
+TEDx
+TEKsystems
+TELUS
+Taiwan Semiconductor
+Take2 Consulting, LLC
+Taktile
+Talan - Oracle Technologies (formerly Insum)
+Tata Consultancy Services
+Tavant
+Tealium
+Team Topologies
+TecAccess
+TechCrunch
+Telefónica
+Telenor
+Telesign
+Telkom Indonesia
+Telstra
+Temporal Technologies
+Tempus AI
+Tenable, Inc.
+Tencent Holdings
+Texas Instruments
+Texas-Sized Promo
+The Architectures Center Of Excellence (ArchitecturesCOE.org)
+The Business Architecture Center Of Excellence (BACOE.org)
+The Change Decision
+The Clearing House
+The Destination Pass
+The Economist
+The Festival Group
+The Harvey School
+The Judge Group
+The NOCO Company
+The Network, Inc.
+The Payments Canada SUMMIT
+The Rowboat Company
+The Swift Group, LLC
+The Walt Disney Company
+Thought Machine
+Toast, Inc.
+Tokyo Electron
+Top Level Design
+Torc Robotics
+TowneBank
+TradingView
+Tredence
+Turing.com
+Turnkey
+U.S. Bank
+U.S. Faster Payments Council
+UNIZON Taskforce Technology
+US Anesthesia Partners
+Ubertesters
+Umbrella
+Under Armour
+Union Bankshares Corp.
+VCU Health
+VMware
+VSoft Corporation
+VTC² LLC
+ValueBlue
+ValueLabs
+Vention
+Veracity by RGP
+Veridian Tech Solutions, Inc.
+Verizon Communications
+Visa
+Visa Direct
+Vivendi
+Vivid Soft Global
+Vodafone
+W. R. Berkley Corporation
+Walmart
+Walt Disney
+Wayfair
+Wells Fargo
+Whop
+Würth Industry USA
+Xiaomi
+Y Combinator
+Zowie
+community of SEVEN
+eBay
+enChoice®, Inc.
+finzly
+ftx
+helpunemployed.com
+t12n.ai
