@@ -1,0 +1,26 @@
+# Environment Variables & Tokens
+.env
+# OAuth Secrets
+credentials.json
+token.json
+
+# Local Environment Databases
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+
+# Extracted Output Files
+potential-jobs/
+queued_resume/
+
+# macOS
+.DS_Store
+
+# IDEs
+.vscode/
+.idea/
+
+# Go build binaries
+agentic-job-search
+*.exe
+*.test

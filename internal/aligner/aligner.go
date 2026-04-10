@@ -2,6 +2,7 @@ package aligner
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,15 +27,13 @@ type TailoredResult struct {
 
 // Aligner handles the logic of tailoring a resume for a specific job
 type Aligner struct {
-	rag      *rag.RAG
-	basePath string
+	rag *rag.RAG
 }
 
 // NewAligner creates a new aligner instance
-func NewAligner(r *rag.RAG, basePath string) *Aligner {
+func NewAligner(r *rag.RAG) *Aligner {
 	return &Aligner{
-		rag:      r,
-		basePath: basePath,
+		rag: r,
 	}
 }
 
@@ -120,14 +119,28 @@ RESUME:
 		result.Report = strings.TrimSpace(parts[1])
 		resumePart := strings.SplitN(parts[0], "RESUME:", 2)
 		if len(resumePart) >= 2 {
-			result.TailoredResume = strings.TrimSpace(resumePart[1])
+			result.TailoredResume = cleanMarkdownTraces(strings.TrimSpace(resumePart[1]))
 		}
 	} else {
-		result.TailoredResume = response
+		result.TailoredResume = cleanMarkdownTraces(response)
 		result.Report = "No separate report found."
 	}
 
 	return result, nil
+}
+
+// cleanMarkdownTraces removes structural LLM artifacts like ```markdown
+func cleanMarkdownTraces(s string) string {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "```markdown") {
+		s = strings.TrimPrefix(s, "```markdown")
+	} else if strings.HasPrefix(s, "```") {
+		s = strings.TrimPrefix(s, "```")
+	}
+	if strings.HasSuffix(s, "```") {
+		s = strings.TrimSuffix(s, "```")
+	}
+	return strings.TrimSpace(s)
 }
 
 func parseScore(s string) int {
@@ -191,16 +204,16 @@ func parseMarketSalary(s string) string {
 	return "Unknown"
 }
 
-// SaveJobProfile saves the JD, fit brief, and score to the potential-jobs folder
+// SaveJobProfile saves the JD, fit brief, and score to the potential-jobs folder using a SHA256 identity
 func SaveJobProfile(job scraper.Job, result TailoredResult) error {
 	dir := "./potential-jobs"
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
 
-	safeCompany := sanitize(job.Company)
-	safeTitle := sanitize(job.Title)
-	filename := fmt.Sprintf("%03d_%s_%s.md", result.Score, safeCompany, safeTitle)
+	hash := sha256.Sum256([]byte(job.ID))
+	signature := fmt.Sprintf("%x", hash)
+	filename := fmt.Sprintf("%s.md", signature)
 	path := filepath.Join(dir, filename)
 
 	content := fmt.Sprintf(`# Job Profile: %s @ %s
@@ -224,19 +237,18 @@ URL: %s
 	return os.WriteFile(path, []byte(content), 0644)
 }
 
-// SaveTailoredResume saves the content and report to the queued_resume folder
+// SaveTailoredResume saves the content and report to the queued_resume folder using a SHA256 identity
 func SaveTailoredResume(job scraper.Job, result TailoredResult) error {
 	dir := "./queued_resume"
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
 
-	safeCompany := sanitize(job.Company)
-	safeTitle := sanitize(job.Title)
-	baseName := fmt.Sprintf("%03d_%s_%s", result.Score, safeCompany, safeTitle)
+	hash := sha256.Sum256([]byte(job.ID))
+	signature := fmt.Sprintf("%x", hash)
 	
-	resumeFile := filepath.Join(dir, baseName+".md")
-	reportFile := filepath.Join(dir, baseName+"_REPORT.md")
+	resumeFile := filepath.Join(dir, signature+".md")
+	reportFile := filepath.Join(dir, signature+"_REPORT.md")
 
 	if err := os.WriteFile(resumeFile, []byte(result.TailoredResume), 0644); err != nil {
 		return err

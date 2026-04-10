@@ -22,7 +22,6 @@ import (
 
 const (
 	projectHistoryPath = "./project_history.md"
-	baseResumePath     = "./experience/base_resume.md"
 	port               = ":8081"
 )
 
@@ -98,7 +97,7 @@ func main() {
 		db:          db,
 		scraper:     manager,
 		ragPipeline: ragPipeline,
-		aligner:     aligner.NewAligner(ragPipeline, baseResumePath),
+		aligner:     aligner.NewAligner(ragPipeline),
 	}
 
 	// ── Step 2: Setup HTTP Routes ────────────────────────────────────────────
@@ -115,6 +114,7 @@ func main() {
 	mux.HandleFunc("POST /api/jobs/tailor/{id}", srv.handleTailorJob)
 	mux.HandleFunc("POST /api/export/gdocs/{id}", srv.handleGoogleDocsExport)
 	mux.HandleFunc("GET /api/jobs/search", srv.handleSearchJobs)
+	mux.HandleFunc("GET /api/resumes", srv.handleListResumes)
 
 	fmt.Printf("\n✅ Server online! Available at http://localhost%s\n", port)
 	if err := http.ListenAndServe(port, mux); err != nil {
@@ -210,6 +210,21 @@ func (s *server) handleScrapeJobs(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]int{"scraped": len(jobs), "added": added})
 }
 
+// GET /api/resumes
+func (s *server) handleListResumes(w http.ResponseWriter, r *http.Request) {
+	var resumes []string
+	entries, err := os.ReadDir("./experience")
+	if err == nil {
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+				resumes = append(resumes, e.Name())
+			}
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resumes)
+}
+
 // POST /api/jobs/tailor/{id}
 func (s *server) handleTailorJob(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
@@ -224,9 +239,16 @@ func (s *server) handleTailorJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	baseResumeRaw, err := os.ReadFile(baseResumePath)
+	templateName := r.URL.Query().Get("template")
+	if templateName == "" {
+		templateName = "base_resume.md"
+	}
+	
+	// Directory traversal protection implicitly via filepath.Join + specific dir checking
+	templatePath := filepath.Join("./experience", templateName)
+	baseResumeRaw, err := os.ReadFile(templatePath)
 	if err != nil {
-		http.Error(w, "could not read base resume", http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("could not read base resume template '%s'", templateName), http.StatusInternalServerError)
 		return
 	}
 
@@ -235,7 +257,7 @@ func (s *server) handleTailorJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Printf("📝 Tailoring resume for %s @ %s\n", job.Title, job.Company)
+	fmt.Printf("📝 Tailoring resume for %s @ %s using %s\n", job.Title, job.Company, templateName)
 	ctx := context.Background()
 	result, err := s.aligner.TailorResume(ctx, job, string(baseResumeRaw))
 	if err != nil {
@@ -287,7 +309,9 @@ func (s *server) handleGoogleDocsExport(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	url, err := drive.UploadAsDocx(r.Context(), "Tailored_Resume_"+job.Company, reqBody.RawHTML)
+	safeCompany := strings.ReplaceAll(job.Company, " ", "_")
+	title := fmt.Sprintf("%s-Mike_Lee_%s", time.Now().Format("20060102"), safeCompany)
+	url, err := drive.UploadAsDocx(r.Context(), title, reqBody.RawHTML)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

@@ -13,9 +13,16 @@ document.addEventListener('DOMContentLoaded', () => {
     let jobsData = [];
     let activeJobId = null;
     let minCompValue = 0;
+    let availableResumes = [];
 
     // Load initial jobs
     fetchJobs();
+
+    // Load available templates
+    fetch('/api/resumes')
+        .then(r => r.json())
+        .then(data => { availableResumes = data || []; })
+        .catch(e => console.error("Could not fetch resumes", e));
 
     const stopScrapeBtn = document.getElementById('stop-scrape-btn');
 
@@ -105,6 +112,23 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     searchInput.addEventListener('input', updateClearButtonVisibility);
+
+    // sanitizeMarkdown specifically repairs LLM hallucinations involving syntax limits, like Pandoc underlines and dangling bold markers
+    function sanitizeMarkdown(md) {
+        if (!md) return "";
+        let clean = md.replace(/\[([^\]]+)\]\{\.underline\}/g, '$1'); // Just extract Pandoc text, remove underline marking entirely
+        
+        // The user explicitly requested to remove all headers (#) and asterisks/bolding completely
+        // Remove all hashtags
+        clean = clean.replace(/#/g, '');
+        
+        // Remove all asterisks (this removes bolding **, italics *, and star bullets)
+        // To preserve bullet points, we will convert asterisk bullets to hyphens first
+        clean = clean.replace(/^\s*\*\s/gm, '- '); 
+        clean = clean.replace(/\*/g, '');
+
+        return clean;
+    }
 
     clearBtn.addEventListener('click', () => {
         searchInput.value = '';
@@ -258,6 +282,11 @@ document.addEventListener('DOMContentLoaded', () => {
                         <button class="primary-btn" id="run-tailor-btn">
                             <span class="icon">✨</span> Align & Tailor Resume
                         </button>
+                        ${availableResumes.length > 1 ? `
+                            <select id="resume-template-select" style="background: rgba(255,255,255,0.05); color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; padding: 0.5rem;">
+                                ${availableResumes.map(r => `<option style="color: #333;" value="${r}">${r}</option>`).join('')}
+                            </select>
+                        ` : ''}
                         <button class="secondary-btn" id="open-export-modal-btn" style="display:none; color: #fff; border-color: rgba(255,255,255,0.3);">
                             <span class="icon">📄</span> View & Export
                         </button>
@@ -313,7 +342,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
                 <h3>Tailored Resume Preview</h3>
                 <br/>
-                <div class="resume-preview">${marked.parse(cachedResult.TailoredResume)}</div>
+                <div class="resume-preview">${marked.parse(sanitizeMarkdown(cachedResult.TailoredResume))}</div>
                 <br/>
                 <h3>Alteration Report</h3>
                 <br/>
@@ -327,7 +356,7 @@ document.addEventListener('DOMContentLoaded', () => {
             exportBtn.onclick = () => {
                 const modal = document.getElementById('resume-modal');
                 const printHtml = document.getElementById('tailored-resume-html');
-                printHtml.innerHTML = marked.parse(cachedResult.TailoredResume);
+                printHtml.innerHTML = marked.parse(sanitizeMarkdown(cachedResult.TailoredResume));
                 modal.showModal();
             };
         }
@@ -341,8 +370,16 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.innerHTML = '<span class="icon">⏳</span> Tailoring (Takes ~30s)...';
         btn.disabled = true;
 
+        let templateQuery = "";
+        const selectBox = document.getElementById('resume-template-select');
+        if (selectBox) {
+            templateQuery = "?template=" + encodeURIComponent(selectBox.value);
+        } else if (availableResumes.length === 1) {
+            templateQuery = "?template=" + encodeURIComponent(availableResumes[0]);
+        }
+
         try {
-            const res = await fetch(`/api/jobs/tailor/${id}`, { method: 'POST' });
+            const res = await fetch(`/api/jobs/tailor/${id}${templateQuery}`, { method: 'POST' });
             if(!res.ok) throw new Error("Tailor failed on backend");
             
             const result = await res.json();
@@ -388,7 +425,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
                 <h3>Tailored Resume Preview</h3>
                 <br/>
-                <div class="resume-preview">${marked.parse(result.TailoredResume)}</div>
+                <div class="resume-preview">${marked.parse(sanitizeMarkdown(result.TailoredResume))}</div>
                 <br/>
                 <h3>Alteration Report</h3>
                 <br/>
@@ -404,13 +441,23 @@ document.addEventListener('DOMContentLoaded', () => {
                 const modal = document.getElementById('resume-modal');
                 const printHtml = document.getElementById('tailored-resume-html');
                 
-                printHtml.innerHTML = marked.parse(result.TailoredResume);
+                printHtml.innerHTML = marked.parse(sanitizeMarkdown(result.TailoredResume));
                 modal.showModal();
             };
 
+            // Vital: Update the local javascript memory list so if the user hits BACK without refreshing, it dynamically remembers!
+            const jobIndex = jobsData.findIndex(j => j.id === id);
+            if(jobIndex !== -1) {
+                jobsData[jobIndex].tailored_resume = result.TailoredResume;
+                jobsData[jobIndex].tailored_report = result.Report;
+                jobsData[jobIndex].fit_brief = result.FitBrief;
+                jobsData[jobIndex].market_salary = result.MarketSalary;
+                jobsData[jobIndex].score = result.Score;
+            }
+
         } catch(e) {
             console.error(e);
-            alert("Error running tailor process. Ensure Ollama/Redis are running.");
+            alert("Error running tailor process. Ensure Ollama/Redis are running.\n\nDetails: " + e.message);
         } finally {
             btn.innerHTML = '<span class="icon">✨</span> Re-Tailor';
             btn.disabled = false;
@@ -422,8 +469,16 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('close-modal-btn').onclick = () => resModal.close();
     
     document.getElementById('export-pdf-btn').onclick = () => {
-        // We use native window.print() and CSS @media print
+        const d = new Date();
+        const ymd = d.getFullYear() + String(d.getMonth()+1).padStart(2,'0') + String(d.getDate()).padStart(2,'0');
+        const activeJob = jobsData.find(j => j.id === activeJobId);
+        const safeCompany = (activeJob && activeJob.company) ? activeJob.company.replace(/[^A-Za-z0-9]/g, '_') : 'Resume';
+        const exportName = `${ymd}-Mike_Lee_${safeCompany}`;
+
+        const oldTitle = document.title;
+        document.title = exportName;
         window.print();
+        document.title = oldTitle;
     };
 
     document.getElementById('export-docx-btn').onclick = () => {
@@ -432,7 +487,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const htmlPayload = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Resume</title><style>body{font-family:sans-serif;}</style></head><body>${content}</body></html>`;
         
         const blob = htmlDocx.asBlob(htmlPayload);
-        saveAs(blob, "Tailored_Resume.docx");
+
+        const d = new Date();
+        const ymd = d.getFullYear() + String(d.getMonth()+1).padStart(2,'0') + String(d.getDate()).padStart(2,'0');
+        const activeJob = jobsData.find(j => j.id === activeJobId);
+        const safeCompany = (activeJob && activeJob.company) ? activeJob.company.replace(/[^A-Za-z0-9]/g, '_') : 'Resume';
+        const exportName = `${ymd}-Mike_Lee_${safeCompany}.docx`;
+
+        saveAs(blob, exportName);
     };
 
     document.getElementById('export-gdocs-btn').onclick = async () => {
