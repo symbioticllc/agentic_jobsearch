@@ -41,7 +41,7 @@ func New(ctx context.Context) (*RAG, error) {
 	return &RAG{redis: r, embedder: embed}, nil
 }
 
-// IngestDocument reads a markdown file, chunks + embeds it, and upserts into ChromaDB.
+// IngestDocument reads a markdown file, chunks + embeds it, and upserts into Redis.
 // Safe to call multiple times — existing chunks are updated, not duplicated.
 func (r *RAG) IngestDocument(ctx context.Context, collectionName string, filePath string) (int, error) {
 	fmt.Printf(" -> Reading document: %s\n", filePath)

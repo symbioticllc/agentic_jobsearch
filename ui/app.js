@@ -410,7 +410,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         } catch(e) {
             console.error(e);
-            alert("Error running tailor process. Ensure Ollama/Chroma are running.");
+            alert("Error running tailor process. Ensure Ollama/Redis are running.");
         } finally {
             btn.innerHTML = '<span class="icon">✨</span> Re-Tailor';
             btn.disabled = false;
@@ -436,24 +436,41 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     document.getElementById('export-gdocs-btn').onclick = async () => {
-        const contentHtml = document.getElementById('tailored-resume-html').innerHTML;
-
+        const btn = document.getElementById('export-gdocs-btn');
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '<span class="icon">☁️</span> Uploading...';
+        btn.disabled = true;
+        
         try {
-            // Attempt to write HTML into the clipboard buffer
-            const blob = new Blob([contentHtml], { type: 'text/html' });
-            const plainBlob = new Blob([document.getElementById('tailored-resume-html').innerText], { type: 'text/plain' });
-            await navigator.clipboard.write([
-                new ClipboardItem({
-                    'text/html': blob,
-                    'text/plain': plainBlob
-                })
-            ]);
-            alert("Resume formatted to clipboard! Opening Google Docs... Press Cmd+V (or Ctrl+V) to paste your resume securely into the blank document.");
-            window.open('https://docs.google.com/document/create', '_blank');
+            const contentHtml = document.getElementById('tailored-resume-html').innerHTML;
+            
+            // Post payload to our Go driver
+            const res = await fetch(`/api/export/gdocs/${activeJobId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ rawHtml: contentHtml })
+            });
+
+            if (!res.ok) {
+                const errText = await res.text();
+                throw new Error(errText);
+            }
+
+            const data = await res.json();
+            alert("Success! Your resume has been uploaded natively to Google Docs.");
+            window.open(data.url, '_blank');
         } catch(e) {
-            console.error("Clipboard API failed due to localhost constraint", e);
-            alert("Please copy the text manually, then paste into Google Docs. (Clipboard API requires HTTPS)");
-            window.open('https://docs.google.com/document/create', '_blank');
+            console.error(e);
+            
+            // Graceful failure fallback check
+            if (e.message.includes("missing credentials.json") || e.message.includes("OAuth token not found")) {
+                alert(`Authentication Required: ${e.message}`);
+            } else {
+                alert(`Google Docs Export Failed: ${e.message}`);
+            }
+        } finally {
+            btn.innerHTML = originalText;
+            btn.disabled = false;
         }
     };
 

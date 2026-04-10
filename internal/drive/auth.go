@@ -10,6 +10,7 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/drive/v3"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 )
 
@@ -83,7 +84,7 @@ func UploadAsDocx(ctx context.Context, title string, htmlContent string) (string
 	
 	// Doing the multipart upload. 
 	// Provide the HTML file, and let Google's ingestion converter parse it
-	res, err := srv.Files.Create(f).Media(upFile, google.ContentType("text/html")).Do()
+	res, err := srv.Files.Create(f).Media(upFile, googleapi.ContentType("text/html")).Do()
 	if err != nil {
 		return "", fmt.Errorf("unable to upload file: %w", err)
 	}

@@ -3,7 +3,11 @@ module github.com/leee/agentic-jobs
 go 1.26
 
 require (
+	github.com/chromedp/chromedp v0.15.1
+	github.com/redis/go-redis/v9 v9.18.0
 	github.com/tmc/langchaingo v0.1.14
+	golang.org/x/oauth2 v0.36.0
+	google.golang.org/api v0.275.0
 	modernc.org/sqlite v1.48.2
 )
 
@@ -13,7 +17,6 @@ require (
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/chromedp/cdproto v0.0.0-20260321001828-e3e3800016bc // indirect
-	github.com/chromedp/chromedp v0.15.1 // indirect
 	github.com/chromedp/sysutil v1.1.0 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/dlclark/regexp2 v1.10.0 // indirect
@@ -32,7 +35,6 @@ require (
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/pkoukk/tiktoken-go v0.1.6 // indirect
-	github.com/redis/go-redis/v9 v9.18.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.67.0 // indirect
@@ -42,10 +44,8 @@ require (
 	go.uber.org/atomic v1.11.0 // indirect
 	golang.org/x/crypto v0.49.0 // indirect
 	golang.org/x/net v0.52.0 // indirect
-	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.35.0 // indirect
-	google.golang.org/api v0.275.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260401024825-9d38bb4040a9 // indirect
 	google.golang.org/grpc v1.80.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect

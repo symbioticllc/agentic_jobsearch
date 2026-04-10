@@ -12,7 +12,7 @@ type Chunk struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// QueryResult is a chunk returned from a ChromaDB similarity search
+// QueryResult is a chunk returned from a Redis Vector similarity search
 type QueryResult struct {
 	Chunk    Chunk
 	Distance float64

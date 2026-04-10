@@ -6,7 +6,7 @@ An AI-powered job scraping and resume alignment system. Scrapes jobs from multip
 
 1. **Scrapes** job listings from RemoteOK, Hacker News "Who is Hiring?", and direct company ATS portals (Greenhouse, Lever, with a DuckDuckGo + LLM fallback for others)
 2. **Stores** all jobs in a local SQLite database
-3. **Indexes** job descriptions into ChromaDB for semantic search
+3. **Indexes** job descriptions into Redis Stack for semantic search
 4. **Tailors** your resume for a specific job using RAG-augmented LLM generation — pulls the most relevant sections of your project history and rewrites your resume to match the JD
 5. **Scores** each job on a 0–100 fit scale, with compensation awareness (penalizes roles significantly below your target)
 6. **Saves** a tailored resume and alteration report to `queued_resume/` and a job profile to `potential-jobs/`
@@ -29,7 +29,7 @@ An AI-powered job scraping and resume alignment system. Scrapes jobs from multip
        │          │                │
 ┌──────▼──┐  ┌───▼────┐  ┌────────▼────────┐
 │ Scraper │  │ SQLite │  │   RAG Pipeline  │
-│ Manager │  │  Store │  │ ChromaDB+Ollama  │
+│ Manager │  │  Store │  │ Redis Stack+LLM │
 └──┬──┬───┘  └────────┘  └────────┬────────┘
    │  │  │                        │
    │  │  └─ Direct ATS            │
@@ -48,8 +48,8 @@ An AI-powered job scraping and resume alignment system. Scrapes jobs from multip
 - [Ollama](https://ollama.com/) running locally on port `11434`
   - `ollama pull gemma2:9b` — resume tailoring LLM
   - `ollama pull nomic-embed-text` — embeddings model
-- [ChromaDB](https://docs.trychroma.com/) running locally on port `8000`
-  - `pip install chromadb && chroma run --host localhost --port 8000`
+- [Redis Stack](https://redis.io/docs/about/about-stack/) running locally on port `6379`
+  - `docker run -d --name redis-stack -p 6379:6379 -p 8001:8001 redis/redis-stack:latest`
 
 ## Getting started
 
@@ -59,7 +59,7 @@ git clone <repo>
 cd agentic-jobs
 go mod download
 
-# 2. Start ChromaDB and Ollama (see prerequisites)
+# 2. Start Redis Stack and Ollama (see prerequisites)
 
 # 3. Add your resume content
 #    - Edit experience/base_resume.md  (used as the base for tailoring)
@@ -90,7 +90,7 @@ air -c .air.toml
 docker compose up
 ```
 
-> Note: The Docker setup currently uses port 8080 and includes Redis. ChromaDB and Ollama still need to run on the host.
+> Note: The Docker setup currently uses port 8080 and includes Redis. Ollama still needs to run on the host.
 
 ## Configuration
 
@@ -143,7 +143,7 @@ Files are prefixed with the fit score (0–100) for easy sorting.
 ├── internal/
 │   ├── aligner/    # Resume tailoring: RAG context + LLM prompt + output parsing
 │   ├── llm/        # Ollama wrapper (LangchainGo)
-│   ├── rag/        # ChromaDB client, embedder, markdown chunker
+│   ├── rag/        # Redis Vector client, embedder, markdown chunker
 │   ├── scraper/    # RemoteOK, HN, Direct ATS scrapers
 │   └── store/      # SQLite persistence
 ├── ui/             # Frontend: index.html, app.js, index.css
