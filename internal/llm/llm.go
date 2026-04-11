@@ -18,12 +18,12 @@ var globalLLM llms.Model
 
 // InitLLM sets up Ollama via LangchainGo
 func InitLLM() error {
-	fmt.Println(" -> Initializing LLM Orchestration Layer (Ollama + Gemma)...")
+	fmt.Println(" -> Initializing LLM Orchestration Layer (Ollama + Gemma4 31B)...")
 
 	var err error
 	globalLLM, err = ollama.New(
-		ollama.WithServerURL("http://localhost:11434"),
-		ollama.WithModel("gemma2:9b"),
+		ollama.WithServerURL("http://127.0.0.1:11434"),
+		ollama.WithModel("gemma4:31b"),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to initialize Ollama: %w", err)

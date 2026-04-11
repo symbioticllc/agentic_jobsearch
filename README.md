@@ -7,9 +7,10 @@ An AI-powered job scraping and resume alignment system. Scrapes jobs from multip
 1. **Scrapes** job listings from RemoteOK, Hacker News "Who is Hiring?", and direct company ATS portals (Greenhouse, Lever, with a DuckDuckGo + LLM fallback for others)
 2. **Stores** all jobs in a local SQLite database
 3. **Indexes** job descriptions into Redis Stack for semantic search
-4. **Tailors** your resume for a specific job using RAG-augmented LLM generation — pulls the most relevant sections of your project history and rewrites your resume to match the JD
-5. **Scores** each job on a 0–100 fit scale, with compensation awareness (penalizes roles significantly below your target)
-6. **Saves** a tailored resume and alteration report to `queued_resume/` and a job profile to `potential-jobs/`
+4. **Ingests** context dynamically from base resumes, Brag Sheets, and LinkedIn URLs natively via a dedicated Profile Management UI. Universal decoders accept `.pdf`, `.docx`, `.md`, and public **Google Docs URLs**. 
+5. **Tailors** your resume for a specific job using RAG-augmented LLM generation — pulling the most relevant sections of your project history and strictly targeting the explicit ATS systems organically. 
+6. **Scores** each job on a 0–100 fit scale, utilizing market data algorithms to auto-penalize roles significantly below your target compensation profile.
+7. **Saves** a tailored resume, customized cover letter, and a comprehensive alterations report perfectly matching the job logic.
 
 ## Architecture
 
@@ -61,9 +62,12 @@ go mod download
 
 # 2. Start Redis Stack and Ollama (see prerequisites)
 
-# 3. Add your resume content
-#    - Edit experience/base_resume.md  (used as the base for tailoring)
-#    - Edit project_history.md         (detailed history the RAG pipeline draws from)
+# 3. Native Setup Panel
+#    - Open http://localhost:8081
+#    - Click the "⚙️ User Profile & Setup" button.
+#    - Save your LinkedIn Profile URL into the DB.
+#    - Upload a Base Resume (.md, .pdf, .docx, or Google Docs URL).
+#    - Upload a Brag Sheet into the RAG vector store for explicitly morphed constraints.
 
 # 4. Optionally add target companies
 #    - Edit target_companies/companies.txt (one company name per line)

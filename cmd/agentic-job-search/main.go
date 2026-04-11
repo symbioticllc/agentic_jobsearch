@@ -1,16 +1,22 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ledongthuc/pdf"
+	"github.com/nguyenthenguyen/docx"
 
 	"github.com/leee/agentic-jobs/internal/aligner"
 	"github.com/leee/agentic-jobs/internal/drive"
@@ -78,19 +84,6 @@ func main() {
 			}
 		}
 
-		// Sync existing SQLite database jobs into Redis vector index in the background
-		go func() {
-			fmt.Println("📚 Synchronizing SQLite jobs into Redis DB (Background)...")
-			existingJobs, err := db.GetAllJobs()
-			if err == nil && len(existingJobs) > 0 {
-				_, err := ragPipeline.IngestJobs(context.Background(), "jobs", existingJobs)
-				if err != nil {
-					log.Printf("⚠️ Failed to sync historical jobs into vector DB: %v\n", err)
-				} else {
-					fmt.Printf("✅ Synchronized %d historically scraped jobs into Redis\n", len(existingJobs))
-				}
-			}
-		}()
 	}
 
 	srv := &server{
@@ -107,24 +100,183 @@ func main() {
 	fs := http.FileServer(http.Dir("./ui"))
 	mux.Handle("/", fs)
 
-	// API Routes
-	mux.HandleFunc("GET /api/jobs", srv.handleGetJobs)
-	mux.HandleFunc("POST /api/scrape", srv.handleScrapeJobs)
-	mux.HandleFunc("POST /api/scrape/stop", srv.handleStopScrape)
-	mux.HandleFunc("POST /api/jobs/tailor/{id}", srv.handleTailorJob)
-	mux.HandleFunc("POST /api/export/gdocs/{id}", srv.handleGoogleDocsExport)
-	mux.HandleFunc("GET /api/jobs/search", srv.handleSearchJobs)
-	mux.HandleFunc("GET /api/resumes", srv.handleListResumes)
+	// API Routes (Wrapped in Auth Middleware for Multi-Tenancy)
+	mux.HandleFunc("GET /api/jobs", authMiddleware(srv.handleGetJobs))
+	mux.HandleFunc("POST /api/scrape", authMiddleware(srv.handleScrapeJobs))
+	mux.HandleFunc("POST /api/scrape/stop", authMiddleware(srv.handleStopScrape))
+	mux.HandleFunc("POST /api/jobs/tailor/{id}", authMiddleware(srv.handleTailorJob))
+	mux.HandleFunc("POST /api/export/gdocs/{id}", authMiddleware(srv.handleGoogleDocsExport))
+	mux.HandleFunc("GET /api/jobs/search", authMiddleware(srv.handleSearchJobs))
+	mux.HandleFunc("GET /api/resumes", authMiddleware(srv.handleListResumes))
+	
+	// Profile Settings Routes
+	mux.HandleFunc("GET /api/profile", authMiddleware(srv.handleGetProfile))
+	mux.HandleFunc("POST /api/profile", authMiddleware(srv.handleSaveProfile))
+	mux.HandleFunc("POST /api/profile/upload", authMiddleware(srv.handleUploadProfileFile))
 
-	fmt.Printf("\n✅ Server online! Available at http://localhost%s\n", port)
+	fmt.Printf("\n✅ SaaS Architecture online! Available at http://localhost%s\n", port)
 	if err := http.ListenAndServe(port, mux); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
 }
 
+// authMiddleware intercepts requests and asserts Tenant contextual boundaries
+func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		if !strings.HasPrefix(authHeader, "Bearer ") {
+			http.Error(w, "Unauthorized: Identity Token Required", http.StatusUnauthorized)
+			return
+		}
+		userID := strings.TrimPrefix(authHeader, "Bearer ")
+		if userID == "" {
+			http.Error(w, "Unauthorized: Tenant ID Empty", http.StatusUnauthorized)
+			return
+		}
+		ctx := context.WithValue(r.Context(), "user_id", userID)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	}
+}
+
+// GET /api/profile
+func (s *server) handleGetProfile(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value("user_id").(string)
+	linkedIn, _ := s.db.GetSetting(userID, "linkedin_url")
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"linkedin_url": linkedIn})
+}
+
+// POST /api/profile
+func (s *server) handleSaveProfile(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value("user_id").(string)
+	var payload map[string]string
+	if err := json.NewDecoder(r.Body).Decode(&payload); err == nil {
+		if url, ok := payload["linkedin_url"]; ok {
+			s.db.SaveSetting(userID, "linkedin_url", url)
+		}
+	}
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "saved"})
+}
+
+// POST /api/profile/upload
+func (s *server) handleUploadProfileFile(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(10 << 20); err != nil { // 10 MB limit
+		http.Error(w, "Payload too large", http.StatusBadRequest)
+		return
+	}
+
+	fileType := r.FormValue("type") // "resume" or "bragsheet"
+	if fileType == "" {
+		fileType = "resume"
+	}
+
+	var rawMarkdown string
+	var baseFileName string
+
+	gdocURL := r.FormValue("gdoc_url")
+	if gdocURL != "" {
+		// Attempt Google Docs Text extraction over the wire
+		re := regexp.MustCompile(`\/d\/([a-zA-Z0-9-_]+)`)
+		matches := re.FindStringSubmatch(gdocURL)
+		if len(matches) < 2 {
+			http.Error(w, "Invalid Google Docs URL format", http.StatusBadRequest)
+			return
+		}
+		docID := matches[1]
+		exportURL := fmt.Sprintf("https://docs.google.com/document/d/%s/export?format=txt", docID)
+		
+		resp, err := http.Get(exportURL)
+		if err != nil || resp.StatusCode != 200 {
+			http.Error(w, "Failed downloading public Google Doc. Ensure 'Anyone with the link' is enabled.", http.StatusBadRequest)
+			return
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		rawMarkdown = string(b)
+		baseFileName = fmt.Sprintf("gdocs_%s.md", docID)
+	} else {
+		// Handle Binary File Upload
+		file, header, err := r.FormFile("file")
+		if err != nil {
+			http.Error(w, "Missing file or gdoc_url", http.StatusBadRequest)
+			return
+		}
+		defer file.Close()
+
+		rawBytes, err := io.ReadAll(file)
+		if err != nil {
+			http.Error(w, "Failed reading file", http.StatusInternalServerError)
+			return
+		}
+
+		// Try explicit Native parsing based on generic extensions
+		lowerExt := strings.ToLower(filepath.Ext(header.Filename))
+		baseFileName = strings.TrimSuffix(header.Filename, filepath.Ext(header.Filename)) + ".md"
+
+		if lowerExt == ".pdf" {
+			// Save temporarily to use ledongthuc/pdf which requires actual disk file pointer
+			tmpExt, _ := os.CreateTemp("", "upload-*.pdf")
+			tmpExt.Write(rawBytes)
+			tmpExt.Close()
+			defer os.Remove(tmpExt.Name())
+
+			f, r, err := pdf.Open(tmpExt.Name())
+			if err == nil {
+				defer f.Close()
+				var buf bytes.Buffer
+				b, err := r.GetPlainText()
+				if err == nil {
+					buf.ReadFrom(b)
+					rawMarkdown = buf.String()
+				}
+			}
+		} else if lowerExt == ".doc" || lowerExt == ".docx" {
+			tmpExt, _ := os.CreateTemp("", "upload-*.docx")
+			tmpExt.Write(rawBytes)
+			tmpExt.Close()
+			defer os.Remove(tmpExt.Name())
+
+			r, err := docx.ReadDocxFile(tmpExt.Name())
+			if err == nil {
+				doc := r.Editable()
+				rawMarkdown = doc.GetContent()
+				r.Close()
+			}
+		} else {
+			// TXT / MD generic blind ingestion
+			rawMarkdown = string(rawBytes)
+		}
+	}
+
+	userID := r.Context().Value("user_id").(string)
+	tenantDir := filepath.Join("./experience", userID)
+	if err := os.MkdirAll(tenantDir, 0755); err != nil {
+		http.Error(w, "Failed to provision tenant storage", http.StatusInternalServerError)
+		return
+	}
+
+	var outPath string
+	if fileType == "bragsheet" {
+		outPath = filepath.Join(tenantDir, "brag_sheet.md")
+		err := os.WriteFile(outPath, []byte(rawMarkdown), 0644)
+		if err == nil && s.ragPipeline != nil {
+			tenantCollection := fmt.Sprintf("%s_project_history", userID)
+			go s.ragPipeline.IngestDocument(context.Background(), tenantCollection, outPath)
+		}
+	} else {
+		outPath = filepath.Join(tenantDir, filepath.Base(baseFileName))
+		os.WriteFile(outPath, []byte(rawMarkdown), 0644)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "uploaded", "path": outPath})
+}
+
 // GET /api/jobs
 func (s *server) handleGetJobs(w http.ResponseWriter, r *http.Request) {
-	jobs, err := s.db.GetAllJobs()
+	userID := r.Context().Value("user_id").(string)
+	jobs, err := s.db.GetAllJobs(userID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -192,7 +344,8 @@ func (s *server) handleScrapeJobs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	added, err := s.db.SaveJobs(jobs)
+	userID := r.Context().Value("user_id").(string)
+	added, err := s.db.SaveJobs(userID, jobs)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -212,8 +365,11 @@ func (s *server) handleScrapeJobs(w http.ResponseWriter, r *http.Request) {
 
 // GET /api/resumes
 func (s *server) handleListResumes(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value("user_id").(string)
+	tenantDir := filepath.Join("./experience", userID)
+
 	var resumes []string
-	entries, err := os.ReadDir("./experience")
+	entries, err := os.ReadDir(tenantDir)
 	if err == nil {
 		for _, e := range entries {
 			if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
@@ -233,7 +389,8 @@ func (s *server) handleTailorJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := s.db.GetJobByID(id)
+	userID := r.Context().Value("user_id").(string)
+	job, err := s.db.GetJobByID(userID, id)
 	if err != nil {
 		http.Error(w, "job not found", http.StatusNotFound)
 		return
@@ -244,11 +401,20 @@ func (s *server) handleTailorJob(w http.ResponseWriter, r *http.Request) {
 		templateName = "base_resume.md"
 	}
 	
-	// Directory traversal protection implicitly via filepath.Join + specific dir checking
-	templatePath := filepath.Join("./experience", templateName)
+	// Directory traversal protection explicitly isolated within Tenant Box
+	// Fallback chain: tenant upload → root base_resume.md → project_history.md
+	templatePath := filepath.Join("./experience", userID, templateName)
 	baseResumeRaw, err := os.ReadFile(templatePath)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("could not read base resume template '%s'", templateName), http.StatusInternalServerError)
+		// Fallback 1: root-level base_resume.md
+		baseResumeRaw, err = os.ReadFile(filepath.Join(".", templateName))
+	}
+	if err != nil {
+		// Fallback 2: project_history.md as last resort
+		baseResumeRaw, err = os.ReadFile(projectHistoryPath)
+	}
+	if err != nil {
+		http.Error(w, "No resume found. Please upload a base resume via User Profile & Setup.", http.StatusUnprocessableEntity)
 		return
 	}
 
@@ -257,24 +423,19 @@ func (s *server) handleTailorJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Printf("📝 Tailoring resume for %s @ %s using %s\n", job.Title, job.Company, templateName)
+	fmt.Printf("📝 Tailoring resume for %s @ %s using %s [Tenant: %s]\n", job.Title, job.Company, templateName, userID)
 	ctx := context.Background()
-	result, err := s.aligner.TailorResume(ctx, job, string(baseResumeRaw))
+
+	linkedInUrl, _ := s.db.GetSetting(userID, "linkedin_url")
+	
+	result, err := s.aligner.TailorResume(ctx, job, string(baseResumeRaw), linkedInUrl)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("tailor error: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	if err := aligner.SaveJobProfile(job, result); err != nil {
-		log.Printf("Failed to save job profile: %v\n", err)
-	}
-
-	if err := aligner.SaveTailoredResume(job, result); err != nil {
-		log.Printf("Failed to save tailored resume: %v\n", err)
-	}
-
 	// Persist generated alignment securely to the central jobs database
-	if err := s.db.SaveTailoredResult(job.ID, result.TailoredResume, result.Report, result.FitBrief, result.MarketSalary, result.Score); err != nil {
+	if err := s.db.SaveTailoredResult(userID, job.ID, result.TailoredResume, result.Report, result.FitBrief, result.MarketSalary, result.Score, result.CoverLetter); err != nil {
 		log.Printf("⚠️ Failed to explicitly map Tailoring data back to the database: %v\n", err)
 	}
 
@@ -290,7 +451,8 @@ func (s *server) handleGoogleDocsExport(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	job, err := s.db.GetJobByID(id)
+	userID := r.Context().Value("user_id").(string)
+	job, err := s.db.GetJobByID(userID, id)
 	if err != nil {
 		http.Error(w, "job not found", http.StatusNotFound)
 		return
@@ -367,8 +529,9 @@ func (s *server) handleSearchJobs(w http.ResponseWriter, r *http.Request) {
 
 	matchedJobsMap := make(map[string]JobSearchResult)
 	
-	// 1. Perform SQLite FTS5 Search for exact keywords (Instant, Highly Reliable)
-	ftsJobs, err := s.db.SearchFTS(query)
+	// 1. Perform SQLite FTS5 Search for exact keywords mapped specifically to Tenant
+	userID := r.Context().Value("user_id").(string)
+	ftsJobs, err := s.db.SearchFTS(userID, query)
 	if err == nil {
 		log.Printf("🔍 FTS Search for %q retuned %d exact SQLite matches", query, len(ftsJobs))
 		for _, j := range ftsJobs {
@@ -396,7 +559,7 @@ func (s *server) handleSearchJobs(w http.ResponseWriter, r *http.Request) {
 				continue // already secured a spot via exact FTS keyword!
 			}
 			
-			job, err := s.db.GetJobByID(res.Chunk.ID)
+			job, err := s.db.GetJobByID(userID, res.Chunk.ID)
 			if err == nil {
 				matchedJobsMap[res.Chunk.ID] = JobSearchResult{
 					Job:            job,

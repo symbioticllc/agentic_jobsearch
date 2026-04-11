@@ -73,6 +73,10 @@ func (r *RAG) IngestDocument(ctx context.Context, collectionName string, filePat
 		return 0, fmt.Errorf("embedding failed: %w", err)
 	}
 
+	if len(embedded) == 0 {
+		return 0, fmt.Errorf("no valid text chunks found to embed")
+	}
+
 	dim := len(embedded[0].Embedding)
 	if err := r.redis.GetOrCreateIndex(ctx, collectionName, dim); err != nil {
 		return 0, fmt.Errorf("redis collection setup failed: %w", err)

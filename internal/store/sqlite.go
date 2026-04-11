@@ -13,6 +13,7 @@ import (
 const schema = `
 CREATE TABLE IF NOT EXISTS jobs (
 	id           TEXT PRIMARY KEY,
+	user_id      TEXT NOT NULL,
 	title        TEXT NOT NULL,
 	company      TEXT NOT NULL,
 	location     TEXT,
@@ -59,6 +60,13 @@ CREATE TRIGGER IF NOT EXISTS jobs_au AFTER UPDATE ON jobs BEGIN
   INSERT INTO jobs_fts(rowid, id, title, company, location, description, compensation, url, source, tags) 
   VALUES (new.rowid, new.id, new.title, new.company, new.location, new.description, new.compensation, new.url, new.source, new.tags);
 END;
+
+CREATE TABLE IF NOT EXISTS settings (
+	user_id TEXT NOT NULL,
+	key TEXT NOT NULL,
+	value TEXT NOT NULL,
+	PRIMARY KEY(user_id, key)
+);
 `
 
 // SQLiteStore persists scraped jobs using a local SQLite database
@@ -81,6 +89,7 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 	db.Exec("ALTER TABLE jobs ADD COLUMN fit_brief TEXT")
 	db.Exec("ALTER TABLE jobs ADD COLUMN market_salary TEXT")
 	db.Exec("ALTER TABLE jobs ADD COLUMN score INTEGER DEFAULT 0")
+	db.Exec("ALTER TABLE jobs ADD COLUMN cover_letter TEXT")
 
 	// Backfill FTS index for any existing DB records if the index is brand new
 	var ftsCount int
@@ -95,11 +104,11 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 }
 
 // SaveJobs inserts new jobs, ignoring duplicates (keyed by URL)
-func (s *SQLiteStore) SaveJobs(jobs []scraper.Job) (int, error) {
+func (s *SQLiteStore) SaveJobs(userID string, jobs []scraper.Job) (int, error) {
 	stmt, err := s.db.Prepare(`
 		INSERT OR REPLACE INTO jobs 
-			(id, title, company, location, description, compensation, url, source, tags, remote, scraped_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			(id, user_id, title, company, location, description, compensation, url, source, tags, remote, scraped_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return 0, fmt.Errorf("failed to prepare insert: %w", err)
@@ -114,7 +123,7 @@ func (s *SQLiteStore) SaveJobs(jobs []scraper.Job) (int, error) {
 			remote = 1
 		}
 		res, err := stmt.Exec(
-			j.ID, j.Title, j.Company, j.Location, j.Description, j.Compensation,
+			j.ID, userID, j.Title, j.Company, j.Location, j.Description, j.Compensation,
 			j.URL, j.Source, tags, remote, j.ScrapedAt.Format(time.RFC3339),
 		)
 		if err != nil {
@@ -154,8 +163,8 @@ func (s *SQLiteStore) CountBySource() (map[string]int, error) {
 }
 
 // GetAllJobs returns all jobs stored in the database
-func (s *SQLiteStore) GetAllJobs() ([]scraper.Job, error) {
-	rows, err := s.db.Query(`SELECT id, title, company, location, description, compensation, url, source, tags, remote, scraped_at, tailored_resume, tailored_report, fit_brief, market_salary, score FROM jobs ORDER BY scraped_at DESC`)
+func (s *SQLiteStore) GetAllJobs(userID string) ([]scraper.Job, error) {
+	rows, err := s.db.Query(`SELECT id, title, company, location, description, compensation, url, source, tags, remote, scraped_at, tailored_resume, tailored_report, fit_brief, market_salary, score, cover_letter FROM jobs WHERE user_id = ? ORDER BY scraped_at DESC`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -165,10 +174,10 @@ func (s *SQLiteStore) GetAllJobs() ([]scraper.Job, error) {
 	for rows.Next() {
 		var j scraper.Job
 		var tagsStr, scrapedAtStr string
-		var comp, location, source, tr, trep, fb, ms sql.NullString
+		var comp, location, source, tr, trep, fb, ms, cl sql.NullString
 		var remoteInt, score sql.NullInt64
 
-		if err := rows.Scan(&j.ID, &j.Title, &j.Company, &location, &j.Description, &comp, &j.URL, &source, &tagsStr, &remoteInt, &scrapedAtStr, &tr, &trep, &fb, &ms, &score); err != nil {
+		if err := rows.Scan(&j.ID, &j.Title, &j.Company, &location, &j.Description, &comp, &j.URL, &source, &tagsStr, &remoteInt, &scrapedAtStr, &tr, &trep, &fb, &ms, &score, &cl); err != nil {
 			continue
 		}
 
@@ -180,6 +189,7 @@ func (s *SQLiteStore) GetAllJobs() ([]scraper.Job, error) {
 		j.FitBrief = fb.String
 		j.MarketSalary = ms.String
 		j.Score = int(score.Int64)
+		j.CoverLetter = cl.String
 		if tagsStr != "" {
 			j.Tags = strings.Split(tagsStr, ",")
 		}
@@ -191,14 +201,14 @@ func (s *SQLiteStore) GetAllJobs() ([]scraper.Job, error) {
 }
 
 // GetJobByID returns a single job by its ID
-func (s *SQLiteStore) GetJobByID(id string) (scraper.Job, error) {
-	row := s.db.QueryRow(`SELECT id, title, company, location, description, compensation, url, source, tags, remote, scraped_at, tailored_resume, tailored_report, fit_brief, market_salary, score FROM jobs WHERE id = ?`, id)
+func (s *SQLiteStore) GetJobByID(userID string, id string) (scraper.Job, error) {
+	row := s.db.QueryRow(`SELECT id, title, company, location, description, compensation, url, source, tags, remote, scraped_at, tailored_resume, tailored_report, fit_brief, market_salary, score, cover_letter FROM jobs WHERE id = ? AND user_id = ?`, id, userID)
 	var j scraper.Job
 	var tagsStr, scrapedAtStr string
-	var comp, location, source, tr, trep, fb, ms sql.NullString
+	var comp, location, source, tr, trep, fb, ms, cl sql.NullString
 	var remoteInt, score sql.NullInt64
 
-	if err := row.Scan(&j.ID, &j.Title, &j.Company, &location, &j.Description, &comp, &j.URL, &source, &tagsStr, &remoteInt, &scrapedAtStr, &tr, &trep, &fb, &ms, &score); err != nil {
+	if err := row.Scan(&j.ID, &j.Title, &j.Company, &location, &j.Description, &comp, &j.URL, &source, &tagsStr, &remoteInt, &scrapedAtStr, &tr, &trep, &fb, &ms, &score, &cl); err != nil {
 		return j, err
 	}
 
@@ -210,6 +220,7 @@ func (s *SQLiteStore) GetJobByID(id string) (scraper.Job, error) {
 	j.FitBrief = fb.String
 	j.MarketSalary = ms.String
 	j.Score = int(score.Int64)
+	j.CoverLetter = cl.String
 	if tagsStr != "" {
 		j.Tags = strings.Split(tagsStr, ",")
 	}
@@ -218,19 +229,19 @@ func (s *SQLiteStore) GetJobByID(id string) (scraper.Job, error) {
 	return j, nil
 }
 
-// SearchFTS performs a blazingly fast full-text match across local jobs
-func (s *SQLiteStore) SearchFTS(query string) ([]scraper.Job, error) {
+// SearchFTS performs a blazingly fast full-text match across local jobs scoped to a tenant
+func (s *SQLiteStore) SearchFTS(userID string, query string) ([]scraper.Job, error) {
 	// Simple escaping: wrap query in quotes to handle spaces functionally as exact phrasing
 	escapedQuery := `"` + strings.ReplaceAll(query, `"`, `""`) + `"`
-	
+
 	rows, err := s.db.Query(`
-		SELECT j.id, j.title, j.company, j.location, j.description, j.compensation, j.url, j.source, j.tags, j.remote, j.scraped_at, j.tailored_resume, j.tailored_report, j.fit_brief, j.market_salary, j.score
+		SELECT j.id, j.title, j.company, j.location, j.description, j.compensation, j.url, j.source, j.tags, j.remote, j.scraped_at, j.tailored_resume, j.tailored_report, j.fit_brief, j.market_salary, j.score, j.cover_letter
 		FROM jobs_fts f
 		JOIN jobs j ON f.rowid = j.rowid
-		WHERE jobs_fts MATCH ?
+		WHERE jobs_fts MATCH ? AND j.user_id = ?
 		ORDER BY rank
 		LIMIT 25
-	`, escapedQuery)
+	`, escapedQuery, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -240,10 +251,10 @@ func (s *SQLiteStore) SearchFTS(query string) ([]scraper.Job, error) {
 	for rows.Next() {
 		var j scraper.Job
 		var tagsStr, scrapedAtStr string
-		var comp, location, source, tr, trep, fb, ms sql.NullString
+		var comp, location, source, tr, trep, fb, ms, cl sql.NullString
 		var remoteInt, score sql.NullInt64
 
-		if err := rows.Scan(&j.ID, &j.Title, &j.Company, &location, &j.Description, &comp, &j.URL, &source, &tagsStr, &remoteInt, &scrapedAtStr, &tr, &trep, &fb, &ms, &score); err != nil {
+		if err := rows.Scan(&j.ID, &j.Title, &j.Company, &location, &j.Description, &comp, &j.URL, &source, &tagsStr, &remoteInt, &scrapedAtStr, &tr, &trep, &fb, &ms, &score, &cl); err != nil {
 			continue
 		}
 
@@ -255,6 +266,7 @@ func (s *SQLiteStore) SearchFTS(query string) ([]scraper.Job, error) {
 		j.FitBrief = fb.String
 		j.MarketSalary = ms.String
 		j.Score = int(score.Int64)
+		j.CoverLetter = cl.String
 		if tagsStr != "" {
 			j.Tags = strings.Split(tagsStr, ",")
 		}
@@ -265,14 +277,29 @@ func (s *SQLiteStore) SearchFTS(query string) ([]scraper.Job, error) {
 	return jobs, nil
 }
 
-// SaveTailoredResult permanently associates an LLM generated layout with a specific Job
-func (s *SQLiteStore) SaveTailoredResult(id string, resume string, report string, brief string, salary string, score int) error {
+// SaveTailoredResult permanently associates an LLM generated layout with a specific Tenant's Job
+func (s *SQLiteStore) SaveTailoredResult(userID string, id string, resume string, report string, brief string, salary string, score int, coverLetter string) error {
 	_, err := s.db.Exec(`
 		UPDATE jobs
-		SET tailored_resume = ?, tailored_report = ?, fit_brief = ?, market_salary = ?, score = ?
-		WHERE id = ?
-	`, resume, report, brief, salary, score, id)
+		SET tailored_resume = ?, tailored_report = ?, fit_brief = ?, market_salary = ?, score = ?, cover_letter = ?
+		WHERE id = ? AND user_id = ?
+	`, resume, report, brief, salary, score, coverLetter, id, userID)
 	return err
+}
+
+// Setup and Configuration Logic maps to specific explicitly routed users
+func (s *SQLiteStore) SaveSetting(userID string, key string, value string) error {
+	_, err := s.db.Exec(`INSERT OR REPLACE INTO settings (user_id, key, value) VALUES (?, ?, ?)`, userID, key, value)
+	return err
+}
+
+func (s *SQLiteStore) GetSetting(userID string, key string) (string, error) {
+	var val string
+	err := s.db.QueryRow(`SELECT value FROM settings WHERE user_id = ? AND key = ?`, userID, key).Scan(&val)
+	if err == sql.ErrNoRows {
+		return "", nil // Safely return empty if setting hasn't been mapped yet
+	}
+	return val, err
 }
 
 // Close closes the underlying database connection

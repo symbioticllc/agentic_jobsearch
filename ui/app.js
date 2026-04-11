@@ -14,15 +14,142 @@ document.addEventListener('DOMContentLoaded', () => {
     let activeJobId = null;
     let minCompValue = 0;
     let availableResumes = [];
+    let activeTenant = localStorage.getItem("tenant_id");
 
-    // Load initial jobs
-    fetchJobs();
+    // Override Global Fetch
+    const originalFetch = window.fetch;
+    window.fetch = async (...args) => {
+        let [resource, config] = args;
+        if (!config) config = {};
+        if (!config.headers) config.headers = {};
+        if (activeTenant && !resource.toString().includes("http") && resource.toString().startsWith("/api/")) {
+            if (config.headers instanceof Headers) {
+                config.headers.append('Authorization', `Bearer ${activeTenant}`);
+            } else {
+                config.headers['Authorization'] = `Bearer ${activeTenant}`;
+            }
+        }
+        return originalFetch(resource, config);
+    };
+
+    const authModal = document.getElementById('auth-modal');
+    if (!activeTenant) {
+        authModal.showModal();
+    } else {
+        fetchJobs();
+        fetchResumes();
+    }
+
+    document.getElementById('auth-form').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const t = document.getElementById('tenant-id-input').value.trim();
+        if (t) {
+            localStorage.setItem("tenant_id", t);
+            activeTenant = t;
+            authModal.close();
+            fetchJobs();
+            fetchResumes();
+        }
+    });
 
     // Load available templates
-    fetch('/api/resumes')
-        .then(r => r.json())
-        .then(data => { availableResumes = data || []; })
-        .catch(e => console.error("Could not fetch resumes", e));
+    function fetchResumes() {
+        fetch('/api/resumes')
+            .then(async r => {
+                if (!r.ok) throw new Error(await r.text());
+                return r.json();
+            })
+            .then(data => { availableResumes = data || []; })
+            .catch(e => console.error("Could not fetch resumes", e));
+    }
+
+    // Event Listeners for Profile Modal
+    const profileModal = document.getElementById('profile-modal');
+    document.getElementById('open-profile-btn').addEventListener('click', async () => {
+        // Fetch existing linkedin
+        try {
+            const res = await fetch('/api/profile');
+            const data = await res.json();
+            if (data.linkedin_url) document.getElementById('linkedin-url-input').value = data.linkedin_url;
+        } catch(e) {}
+        profileModal.showModal();
+    });
+    
+    document.getElementById('close-profile-btn').addEventListener('click', () => {
+        profileModal.close();
+    });
+
+    document.getElementById('save-linkedin-btn').addEventListener('click', async () => {
+        const url = document.getElementById('linkedin-url-input').value;
+        const statusEl = document.getElementById('linkedin-status');
+        await fetch('/api/profile', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({"linkedin_url": url})
+        });
+        statusEl.style.display = 'inline';
+        setTimeout(() => statusEl.style.display='none', 2000);
+    });
+
+    document.getElementById('resume-upload-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const fileInput = document.getElementById('resume-file');
+        const gdocInput = document.getElementById('resume-gdoc-url');
+        
+        if (!fileInput.files[0] && gdocInput.value.trim() === '') return;
+        
+        const statusEl = document.getElementById('resume-upload-status');
+        
+        const formData = new FormData();
+        if (fileInput.files[0]) formData.append('file', fileInput.files[0]);
+        if (gdocInput.value.trim() !== '') formData.append('gdoc_url', gdocInput.value.trim());
+        formData.append('type', 'resume');
+        
+        statusEl.textContent = "Importing...";
+        statusEl.style.color = "#fbbf24";
+        statusEl.style.display = 'inline';
+        
+        const res = await fetch('/api/profile/upload', {method: 'POST', body: formData});
+        if (res.ok) {
+            statusEl.textContent = "✅ Saved to Base Resumes!";
+            statusEl.style.color = "#10b981";
+            // Refresh resumes explicitly
+            fetch('/api/resumes').then(r=>r.json()).then(data=>{ availableResumes = data || []; });
+        } else {
+            statusEl.textContent = "❌ Upload Failed";
+            statusEl.style.color = "#ef4444";
+        }
+        setTimeout(() => statusEl.style.display='none', 3000);
+    });
+
+    document.getElementById('bragsheet-upload-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const fileInput = document.getElementById('bragsheet-file');
+        const gdocInput = document.getElementById('brag-gdoc-url');
+        
+        if (!fileInput.files[0] && gdocInput.value.trim() === '') return;
+        
+        const statusEl = document.getElementById('brag-upload-status');
+        
+        const formData = new FormData();
+        if (fileInput.files[0]) formData.append('file', fileInput.files[0]);
+        if (gdocInput.value.trim() !== '') formData.append('gdoc_url', gdocInput.value.trim());
+        formData.append('type', 'bragsheet');
+        
+        statusEl.textContent = "Parsing & Ingesting Vectors...";
+        statusEl.style.color = "#fbbf24";
+        statusEl.style.display = 'inline';
+        
+        const res = await fetch('/api/profile/upload', {method: 'POST', body: formData});
+        if (res.ok) {
+            statusEl.textContent = "✅ Brag Sheet Ingested into Context Matrix!";
+            statusEl.style.color = "#10b981";
+        } else {
+            statusEl.textContent = "❌ Ingestion Failed";
+            statusEl.style.color = "#ef4444";
+        }
+        setTimeout(() => statusEl.style.display='none', 4000);
+    });
 
     const stopScrapeBtn = document.getElementById('stop-scrape-btn');
 
@@ -126,6 +253,9 @@ document.addEventListener('DOMContentLoaded', () => {
         // To preserve bullet points, we will convert asterisk bullets to hyphens first
         clean = clean.replace(/^\s*\*\s/gm, '- '); 
         clean = clean.replace(/\*/g, '');
+        
+        // Clean up any lingering backslashes that were escaping markdown (like \*\*)
+        clean = clean.replace(/\\/g, '');
 
         return clean;
     }
@@ -195,7 +325,9 @@ document.addEventListener('DOMContentLoaded', () => {
         jobsData.forEach(job => {
             if (minCompValue > 0) {
                 const jobComp = extractMaxComp(job.compensation);
-                if (jobComp < minCompValue) return; // filter this job out
+                const marketComp = extractMaxComp(job.market_salary);
+                const actualMax = Math.max(jobComp, marketComp);
+                if (actualMax < minCompValue) return; // filter this job out
             }
 
             displayedCount++;
@@ -316,7 +448,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 MarketSalary: job.market_salary,
                 FitBrief: job.fit_brief,
                 TailoredResume: job.tailored_resume,
-                Report: job.tailored_report
+                Report: job.tailored_report,
+                CoverLetter: job.cover_letter
             };
             
             // Populate HUD
@@ -340,6 +473,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="brief-box">
                     <strong>Why you fit:</strong> ${cachedResult.FitBrief}
                 </div>
+                <h3>Cover Letter</h3>
+                <br/>
+                <div class="resume-preview">${cachedResult.CoverLetter ? marked.parse(sanitizeMarkdown(cachedResult.CoverLetter)) : "<em>No cover letter generated.</em>"}</div>
+                <br/>
                 <h3>Tailored Resume Preview</h3>
                 <br/>
                 <div class="resume-preview">${marked.parse(sanitizeMarkdown(cachedResult.TailoredResume))}</div>
@@ -356,7 +493,9 @@ document.addEventListener('DOMContentLoaded', () => {
             exportBtn.onclick = () => {
                 const modal = document.getElementById('resume-modal');
                 const printHtml = document.getElementById('tailored-resume-html');
-                printHtml.innerHTML = marked.parse(sanitizeMarkdown(cachedResult.TailoredResume));
+                // Dynamically join the cover letter text block underneath the resume explicitly inside the native print buffer
+                const clHtml = cachedResult.CoverLetter ? `<h2>Cover Letter</h2>` + marked.parse(sanitizeMarkdown(cachedResult.CoverLetter)) + `<hr />` : '';
+                printHtml.innerHTML = clHtml + marked.parse(sanitizeMarkdown(cachedResult.TailoredResume));
                 modal.showModal();
             };
         }
@@ -380,7 +519,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             const res = await fetch(`/api/jobs/tailor/${id}${templateQuery}`, { method: 'POST' });
-            if(!res.ok) throw new Error("Tailor failed on backend");
+            if(!res.ok) {
+                const errText = await res.text();
+                throw new Error(errText.trim() || "Tailor failed on backend");
+            }
             
             const result = await res.json();
             
@@ -423,6 +565,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="brief-box">
                     <strong>Why you fit:</strong> ${result.FitBrief}
                 </div>
+                <h3>Cover Letter</h3>
+                <br/>
+                <div class="resume-preview">${result.CoverLetter ? marked.parse(sanitizeMarkdown(result.CoverLetter)) : "<em>No cover letter generated.</em>"}</div>
+                <br/>
                 <h3>Tailored Resume Preview</h3>
                 <br/>
                 <div class="resume-preview">${marked.parse(sanitizeMarkdown(result.TailoredResume))}</div>
@@ -441,7 +587,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 const modal = document.getElementById('resume-modal');
                 const printHtml = document.getElementById('tailored-resume-html');
                 
-                printHtml.innerHTML = marked.parse(sanitizeMarkdown(result.TailoredResume));
+                const clGenHtml = result.CoverLetter ? `<h2>Cover Letter</h2>` + marked.parse(sanitizeMarkdown(result.CoverLetter)) + `<hr />` : '';
+                printHtml.innerHTML = clGenHtml + marked.parse(sanitizeMarkdown(result.TailoredResume));
                 modal.showModal();
             };
 
@@ -450,6 +597,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if(jobIndex !== -1) {
                 jobsData[jobIndex].tailored_resume = result.TailoredResume;
                 jobsData[jobIndex].tailored_report = result.Report;
+                jobsData[jobIndex].cover_letter = result.CoverLetter;
                 jobsData[jobIndex].fit_brief = result.FitBrief;
                 jobsData[jobIndex].market_salary = result.MarketSalary;
                 jobsData[jobIndex].score = result.Score;
@@ -475,10 +623,30 @@ document.addEventListener('DOMContentLoaded', () => {
         const safeCompany = (activeJob && activeJob.company) ? activeJob.company.replace(/[^A-Za-z0-9]/g, '_') : 'Resume';
         const exportName = `${ymd}-Mike_Lee_${safeCompany}`;
 
-        const oldTitle = document.title;
-        document.title = exportName;
-        window.print();
-        document.title = oldTitle;
+        const content = document.getElementById('tailored-resume-html').innerHTML;
+        const htmlPayload = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${exportName}</title><style>
+            body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 20px; line-height: 1.5; color: #000; background: #fff; }
+            h1, h2, h3 { margin-top: 1.5em; margin-bottom: 0.5em; }
+            hr { border: 1px solid #ccc; margin: 2em 0; }
+        </style></head><body>${content}</body></html>`;
+
+        const iframe = document.createElement('iframe');
+        iframe.style.position = 'absolute';
+        iframe.style.width = '0px';
+        iframe.style.height = '0px';
+        iframe.style.border = 'none';
+        document.body.appendChild(iframe);
+
+        const doc = iframe.contentWindow.document;
+        doc.open();
+        doc.write(htmlPayload);
+        doc.close();
+
+        iframe.contentWindow.focus();
+        setTimeout(() => {
+            iframe.contentWindow.print();
+            document.body.removeChild(iframe);
+        }, 250);
     };
 
     document.getElementById('export-docx-btn').onclick = () => {

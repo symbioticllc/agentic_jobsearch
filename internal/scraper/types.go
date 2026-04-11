@@ -25,6 +25,7 @@ type Job struct {
 	FitBrief       string    `json:"fit_brief"`
 	TailoredResume string    `json:"tailored_resume"`
 	TailoredReport string    `json:"tailored_report"`
+	CoverLetter    string    `json:"cover_letter"`
 }
 
 // SearchQuery defines the parameters for job scraping runs

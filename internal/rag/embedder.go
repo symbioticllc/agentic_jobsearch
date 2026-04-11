@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const ollamaEmbedURL = "http://localhost:11434/api/embed"
+const ollamaEmbedURL = "http://127.0.0.1:11434/api/embed"
 
 // embedder handles generating vector embeddings via Ollama
 type embedder struct {

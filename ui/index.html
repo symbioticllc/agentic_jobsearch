@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Agentic Job Search</title>
+    <title>Job Search AI</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="index.css">
     
@@ -12,6 +12,22 @@
     <script src="https://unpkg.com/html-docx-js/dist/html-docx.js"></script>
 </head>
 <body>
+    <!-- Identity Context Gateway -->
+    <dialog id="auth-modal" class="glass-modal">
+        <div class="modal-content" style="max-width: 400px; width:100%;">
+            <header class="modal-header" style="justify-content:center; border-bottom:none; padding-bottom:0;">
+                <h2>Tenant Login Gateway</h2>
+            </header>
+            <div style="padding: 1.5rem; text-align:center;">
+                <p style="color:var(--text-muted); font-size:0.9rem; margin-bottom:1rem;">Access completely physically isolated storage arrays.</p>
+                <form id="auth-form" style="display:flex; flex-direction:column; gap:1rem;">
+                    <input type="text" id="tenant-id-input" placeholder="Enter Tenant Email or Username" required pattern=".*\S+.*" style="width:100%; padding:0.75rem; border-radius:6px; background:rgba(255,255,255,0.05); color:#fff; border:1px solid rgba(255,255,255,0.2);">
+                    <button type="submit" class="primary-btn" style="justify-content:center; padding:0.75rem;">Access Environment</button>
+                </form>
+            </div>
+        </div>
+    </dialog>
+
     <div class="background-blobs">
         <div class="blob blob-1"></div>
         <div class="blob blob-2"></div>
@@ -20,7 +36,7 @@
     <main class="app-container">
         <header class="glass-header">
             <div class="logo-area">
-                <h1>Agentic Job Search <span>v1.0</span></h1>
+                <h1>Job Search AI <span>v1.0</span></h1>
             </div>
             
             <div class="global-search-container">
@@ -44,6 +60,10 @@
                         <span class="icon">🔍</span> Scrape New Jobs
                     </button>
                 </div>
+                <!-- Profile Settings Hook -->
+                <button id="open-profile-btn" class="secondary-btn" style="width:100%; border-color: rgba(255,255,255,0.1); justify-content:center;">
+                    <span class="icon">⚙️</span> User Profile & Setup
+                </button>
             </div>
         </header>
 
@@ -59,7 +79,7 @@
                             <label for="min-comp-slider" style="font-size: 0.85rem; color: var(--text-muted);">Min. Compensation</label>
                             <span id="min-comp-display" style="font-size: 0.85rem; font-weight: 600; color: #10b981;">$0</span>
                         </div>
-                        <input type="range" id="min-comp-slider" min="0" max="400000" step="10000" value="0" class="premium-slider">
+                        <input type="range" id="min-comp-slider" min="0" max="600000" step="10000" value="0" class="premium-slider">
                     </div>
                 </div>
                 <div class="job-list" id="job-list">
@@ -101,6 +121,62 @@
         </div>
     </dialog>
 
-    <script src="app.js?v=2"></script>
+    <!-- Profile & Setup Modal -->
+    <dialog id="profile-modal" class="glass-modal" style="width: 600px; max-width: 90vw;">
+        <div class="modal-content">
+            <header class="modal-header">
+                <h2>⚙️ User Pipeline Setup</h2>
+                <button id="close-profile-btn" class="close-btn">&times;</button>
+            </header>
+            <div class="modal-body-scroll" style="padding: 1.5rem; display:flex; flex-direction:column; gap:1.5rem;">
+                
+                <!-- LinkedIn Setting -->
+                <div style="display:flex; flex-direction:column; gap:0.5rem;">
+                    <label style="font-weight:600; color:#fff;">LinkedIn Profile URL</label>
+                    <p style="font-size:0.85rem; color:var(--text-muted); margin:0;">The LLM will ingest your LinkedIn footprint to inherently map tech overlaps automatically.</p>
+                    <div style="display:flex; gap:0.5rem; align-items:center;">
+                        <input type="url" id="linkedin-url-input" placeholder="https://linkedin.com/in/my-profile" style="flex:1; padding:0.5rem; border-radius:6px; background:rgba(255,255,255,0.05); color:#fff; border:1px solid rgba(255,255,255,0.2);">
+                        <button id="save-linkedin-btn" class="primary-btn" style="padding:0.5rem 1rem;">Save</button>
+                    </div>
+                    <span id="linkedin-status" style="font-size:0.8rem; color:#10b981; display:none;">Saved!</span>
+                </div>
+
+                <hr style="border-color: rgba(255,255,255,0.1);">
+
+                <!-- Base Resume Upload -->
+                <div style="display:flex; flex-direction:column; gap:0.5rem;">
+                    <label style="font-weight:600; color:#fff;">Upload Base Resume (Native or Google Docs)</label>
+                    <p style="font-size:0.85rem; color:var(--text-muted); margin:0;">Inject a raw resume variation directly into the generator core context. Supports Markdown, PDF, DOCX, or direct public Google Doc URLs.</p>
+                    <form id="resume-upload-form" style="display:flex; flex-direction:column; gap:0.5rem; width:100%;">
+                        <input type="url" id="resume-gdoc-url" placeholder="Or enter Google Docs URL..." style="padding:0.5rem; border-radius:6px; background:rgba(255,255,255,0.05); color:#fff; border:1px solid rgba(255,255,255,0.2);">
+                        <div style="display: flex; gap:0.5rem; align-items:center;">
+                            <input type="file" id="resume-file" accept=".md,.txt,.pdf,.doc,.docx" style="flex:1; font-size:0.8rem; color:#fff;">
+                            <button type="submit" class="secondary-btn" style="padding:0.5rem 1rem;">Import</button>
+                        </div>
+                    </form>
+                    <span id="resume-upload-status" style="font-size:0.8rem; color:#10b981; display:none;"></span>
+                </div>
+
+                <hr style="border-color: rgba(255,255,255,0.1);">
+
+                <!-- Brag Sheet Upload -->
+                <div style="display:flex; flex-direction:column; gap:0.5rem;">
+                    <label style="font-weight:600; color:#fff;">Upload Brag Sheet (Native or Google Docs)</label>
+                    <p style="font-size:0.85rem; color:var(--text-muted); margin:0;">A highly concentrated list of raw achievements used to specifically morph accomplishments toward the JD's exact constraints.</p>
+                    <form id="bragsheet-upload-form" style="display:flex; flex-direction:column; gap:0.5rem; width:100%;">
+                        <input type="url" id="brag-gdoc-url" placeholder="Or enter Google Docs URL..." style="padding:0.5rem; border-radius:6px; background:rgba(255,255,255,0.05); color:#fff; border:1px solid rgba(255,255,255,0.2);">
+                        <div style="display: flex; gap:0.5rem; align-items:center;">
+                            <input type="file" id="bragsheet-file" accept=".md,.txt,.pdf,.doc,.docx" style="flex:1; font-size:0.8rem; color:#fff;">
+                            <button type="submit" class="secondary-btn" style="padding:0.5rem 1rem; border-color: rgba(192, 132, 252, 0.5); color: #c084fc;">Ingest</button>
+                        </div>
+                    </form>
+                    <span id="brag-upload-status" style="font-size:0.8rem; color:#10b981; display:none;"></span>
+                </div>
+
+            </div>
+        </div>
+    </dialog>
+
+    <script src="app.js"></script>
 </body>
 </html>
