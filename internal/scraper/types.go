@@ -26,6 +26,7 @@ type Job struct {
 	TailoredResume string    `json:"tailored_resume"`
 	TailoredReport string    `json:"tailored_report"`
 	CoverLetter    string    `json:"cover_letter"`
+	TailoringStatus string   `json:"tailoring_status"` // "pending", "processing", "completed", "failed"
 }
 
 // SearchQuery defines the parameters for job scraping runs

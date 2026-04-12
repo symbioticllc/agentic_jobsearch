@@ -34,6 +34,27 @@
     </div>
 
     <main class="app-container">
+
+        <!-- Startup Status Banner -->
+        <div id="startup-banner" style="
+            display: none;
+            align-items: center;
+            gap: 1rem;
+            padding: 0.65rem 1.5rem;
+            background: rgba(15,23,42,0.92);
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            backdrop-filter: blur(12px);
+            position: sticky;
+            top: 0;
+            z-index: 50;
+        ">
+            <div id="startup-spinner" style="width:14px;height:14px;border:2px solid rgba(255,255,255,0.1);border-top:2px solid #60a5fa;border-radius:50%;animation:spin 0.8s linear infinite;flex-shrink:0;"></div>
+            <span id="startup-message" style="flex:1;">Initializing...</span>
+            <span id="startup-detail" style="font-size:0.78rem;opacity:0.6;"></span>
+        </div>
+
         <header class="glass-header">
             <div class="logo-area">
                 <h1>Job Search AI <span>v1.0</span></h1>
@@ -58,6 +79,13 @@
                     </button>
                     <button id="scrape-btn" class="primary-btn">
                         <span class="icon">🔍</span> Scrape New Jobs
+                    </button>
+                    <button id="open-report-btn" class="secondary-btn" style="border-color: rgba(192,132,252,0.4); color: #c084fc;">
+                        <span class="icon">📊</span> Report
+                    </button>
+                    <button id="open-health-btn" class="secondary-btn" title="System Health" style="border-color: rgba(16,185,129,0.4); color: #10b981; padding: 0.5rem 0.75rem; position: relative;">
+                        <span class="icon">❤️</span>
+                        <span id="health-dot" style="position:absolute;top:5px;right:5px;width:8px;height:8px;border-radius:50%;background:#f59e0b;border:1px solid rgba(0,0,0,0.3);"></span>
                     </button>
                 </div>
                 <!-- Profile Settings Hook -->
@@ -121,53 +149,106 @@
         </div>
     </dialog>
 
+    <!-- Company Report Modal -->
+    <dialog id="report-modal" class="glass-modal" style="width: 700px; max-width: 95vw;">
+        <div class="modal-content">
+            <header class="modal-header">
+                <h2>📊 Company Search Report</h2>
+                <button id="close-report-modal-btn" class="close-btn">&times;</button>
+            </header>
+            <div class="modal-actions" style="justify-content: flex-start; gap: 1rem; align-items: center;">
+                <button id="export-report-csv-btn" class="primary-btn" style="background: rgba(16,185,129,0.15); border-color: rgba(16,185,129,0.4); color: #10b981;">
+                    <span class="icon">⬇️</span> Export CSV
+                </button>
+                <span id="report-total-badge" style="font-size: 0.85rem; color: var(--text-muted);"></span>
+            </div>
+
+            <!-- Source Breakdown -->
+            <div id="source-breakdown" style="display:flex; gap:0.6rem; flex-wrap:wrap; padding: 0 1.25rem 1rem;"></div>
+
+            <div class="modal-body-scroll" style="padding: 0; max-height: 55vh;">
+                <table id="report-table" style="width:100%; border-collapse: collapse; font-size: 0.9rem;">
+                    <thead style="position: sticky; top: 0; background: var(--glass-bg, rgba(15,23,42,0.98)); z-index: 2;">
+                        <tr style="border-bottom: 1px solid rgba(255,255,255,0.1); text-align: left;">
+                            <th style="padding: 0.75rem 1.25rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.5px;">Company</th>
+                            <th style="padding: 0.75rem 1.25rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.5px; text-align: right;">Jobs Found</th>
+                            <th style="padding: 0.75rem 1.25rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.5px; text-align: right;">Resumes Tailored</th>
+                        </tr>
+                    </thead>
+                    <tbody id="report-table-body">
+                        <tr><td colspan="3" style="padding: 2rem; text-align: center; color: var(--text-muted);">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </dialog>
+
+    <!-- System Health Modal -->
+    <dialog id="health-modal" class="glass-modal" style="width: 640px; max-width: 95vw;">
+        <div class="modal-content">
+            <header class="modal-header">
+                <h2>❤️ System Health</h2>
+                <button id="close-health-btn" class="close-btn">&times;</button>
+            </header>
+            <div class="modal-actions" style="justify-content: space-between; align-items: center;">
+                <span id="health-overall-badge" style="font-size: 0.9rem; font-weight: 700;"></span>
+                <button id="refresh-health-btn" class="secondary-btn" style="padding: 0.4rem 0.9rem; font-size: 0.85rem;">
+                    <span class="icon">🔄</span> Refresh
+                </button>
+            </div>
+            <div id="health-component-list" class="modal-body-scroll" style="display: flex; flex-direction: column; gap: 0.75rem; padding: 1rem 1.25rem; max-height: 60vh;">
+                <div style="text-align: center; color: var(--text-muted); padding: 2rem;">Checking system status...</div>
+            </div>
+        </div>
+
     <!-- Profile & Setup Modal -->
-    <dialog id="profile-modal" class="glass-modal" style="width: 600px; max-width: 90vw;">
+
+    <dialog id="profile-modal" class="glass-modal" style="width: 620px; max-width: 90vw;">
         <div class="modal-content">
             <header class="modal-header">
                 <h2>⚙️ User Pipeline Setup</h2>
                 <button id="close-profile-btn" class="close-btn">&times;</button>
             </header>
-            <div class="modal-body-scroll" style="padding: 1.5rem; display:flex; flex-direction:column; gap:1.5rem;">
+            <div class="modal-body-scroll" style="display:flex; flex-direction:column; gap:1.75rem;">
                 
                 <!-- LinkedIn Setting -->
-                <div style="display:flex; flex-direction:column; gap:0.5rem;">
-                    <label style="font-weight:600; color:#fff;">LinkedIn Profile URL</label>
-                    <p style="font-size:0.85rem; color:var(--text-muted); margin:0;">The LLM will ingest your LinkedIn footprint to inherently map tech overlaps automatically.</p>
+                <div class="modal-field-group">
+                    <label>LinkedIn Profile URL</label>
+                    <p>The LLM will ingest your LinkedIn footprint to inherently map tech overlaps automatically.</p>
                     <div style="display:flex; gap:0.5rem; align-items:center;">
-                        <input type="url" id="linkedin-url-input" placeholder="https://linkedin.com/in/my-profile" style="flex:1; padding:0.5rem; border-radius:6px; background:rgba(255,255,255,0.05); color:#fff; border:1px solid rgba(255,255,255,0.2);">
-                        <button id="save-linkedin-btn" class="primary-btn" style="padding:0.5rem 1rem;">Save</button>
+                        <input type="url" id="linkedin-url-input" class="modal-input" placeholder="https://linkedin.com/in/my-profile" style="flex:1;">
+                        <button id="save-linkedin-btn" class="primary-btn" style="padding:0.6rem 1.1rem; white-space:nowrap;">Save</button>
                     </div>
-                    <span id="linkedin-status" style="font-size:0.8rem; color:#10b981; display:none;">Saved!</span>
+                    <span id="linkedin-status" style="font-size:0.8rem; color:#10b981; display:none;">✅ Saved!</span>
                 </div>
 
-                <hr style="border-color: rgba(255,255,255,0.1);">
+                <hr style="border:none; border-top:1px solid rgba(255,255,255,0.08);">
 
                 <!-- Base Resume Upload -->
-                <div style="display:flex; flex-direction:column; gap:0.5rem;">
-                    <label style="font-weight:600; color:#fff;">Upload Base Resume (Native or Google Docs)</label>
-                    <p style="font-size:0.85rem; color:var(--text-muted); margin:0;">Inject a raw resume variation directly into the generator core context. Supports Markdown, PDF, DOCX, or direct public Google Doc URLs.</p>
-                    <form id="resume-upload-form" style="display:flex; flex-direction:column; gap:0.5rem; width:100%;">
-                        <input type="url" id="resume-gdoc-url" placeholder="Or enter Google Docs URL..." style="padding:0.5rem; border-radius:6px; background:rgba(255,255,255,0.05); color:#fff; border:1px solid rgba(255,255,255,0.2);">
-                        <div style="display: flex; gap:0.5rem; align-items:center;">
-                            <input type="file" id="resume-file" accept=".md,.txt,.pdf,.doc,.docx" style="flex:1; font-size:0.8rem; color:#fff;">
-                            <button type="submit" class="secondary-btn" style="padding:0.5rem 1rem;">Import</button>
+                <div class="modal-field-group">
+                    <label>Upload Base Resume</label>
+                    <p>Inject a resume variation into the generator context. Supports Markdown, PDF, DOCX, or a public Google Docs URL.</p>
+                    <form id="resume-upload-form" style="display:flex; flex-direction:column; gap:0.6rem;">
+                        <input type="url" id="resume-gdoc-url" class="modal-input" placeholder="Google Docs URL (optional)...">
+                        <div style="display:flex; gap:0.5rem; align-items:center;">
+                            <input type="file" id="resume-file" class="modal-file-input" accept=".md,.txt,.pdf,.doc,.docx">
+                            <button type="submit" class="secondary-btn" style="padding:0.6rem 1rem; white-space:nowrap;">Import</button>
                         </div>
                     </form>
                     <span id="resume-upload-status" style="font-size:0.8rem; color:#10b981; display:none;"></span>
                 </div>
 
-                <hr style="border-color: rgba(255,255,255,0.1);">
+                <hr style="border:none; border-top:1px solid rgba(255,255,255,0.08);">
 
                 <!-- Brag Sheet Upload -->
-                <div style="display:flex; flex-direction:column; gap:0.5rem;">
-                    <label style="font-weight:600; color:#fff;">Upload Brag Sheet (Native or Google Docs)</label>
-                    <p style="font-size:0.85rem; color:var(--text-muted); margin:0;">A highly concentrated list of raw achievements used to specifically morph accomplishments toward the JD's exact constraints.</p>
-                    <form id="bragsheet-upload-form" style="display:flex; flex-direction:column; gap:0.5rem; width:100%;">
-                        <input type="url" id="brag-gdoc-url" placeholder="Or enter Google Docs URL..." style="padding:0.5rem; border-radius:6px; background:rgba(255,255,255,0.05); color:#fff; border:1px solid rgba(255,255,255,0.2);">
-                        <div style="display: flex; gap:0.5rem; align-items:center;">
-                            <input type="file" id="bragsheet-file" accept=".md,.txt,.pdf,.doc,.docx" style="flex:1; font-size:0.8rem; color:#fff;">
-                            <button type="submit" class="secondary-btn" style="padding:0.5rem 1rem; border-color: rgba(192, 132, 252, 0.5); color: #c084fc;">Ingest</button>
+                <div class="modal-field-group">
+                    <label>Upload Brag Sheet</label>
+                    <p>A concentrated list of raw achievements used to morph accomplishments toward a job's exact constraints.</p>
+                    <form id="bragsheet-upload-form" style="display:flex; flex-direction:column; gap:0.6rem;">
+                        <input type="url" id="brag-gdoc-url" class="modal-input" placeholder="Google Docs URL (optional)...">
+                        <div style="display:flex; gap:0.5rem; align-items:center;">
+                            <input type="file" id="bragsheet-file" class="modal-file-input" accept=".md,.txt,.pdf,.doc,.docx">
+                            <button type="submit" class="secondary-btn" style="padding:0.6rem 1rem; white-space:nowrap; border-color:rgba(192,132,252,0.5); color:#c084fc;">Ingest</button>
                         </div>
                     </form>
                     <span id="brag-upload-status" style="font-size:0.8rem; color:#10b981; display:none;"></span>

@@ -487,6 +487,86 @@ body {
     justify-content: center;
 }
 
+/* Profile modal overrides - dark scrollable body */
+#profile-modal .modal-body-scroll {
+    background: rgba(8, 14, 28, 0.6);
+    display: block;
+    padding: 1.5rem;
+}
+
+/* Standard, legible modal inputs */
+.modal-input {
+    width: 100%;
+    padding: 0.65rem 0.85rem;
+    border-radius: 8px;
+    background: #1e293b;
+    color: #f1f5f9;
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    font-size: 0.9rem;
+    font-family: 'Inter', sans-serif;
+    outline: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.modal-input::placeholder {
+    color: #64748b;
+}
+
+.modal-input:focus {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+}
+
+.modal-field-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.modal-field-group label {
+    font-weight: 600;
+    color: #f1f5f9;
+    font-size: 0.9rem;
+}
+
+.modal-field-group p {
+    font-size: 0.82rem;
+    color: #94a3b8;
+    margin: 0;
+    line-height: 1.5;
+}
+
+.modal-field-group hr {
+    border: none;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    margin: 0.5rem 0;
+}
+
+/* File input styling */
+.modal-file-input {
+    flex: 1;
+    font-size: 0.82rem;
+    color: #94a3b8;
+    padding: 0.4rem 0;
+}
+
+.modal-file-input::file-selector-button {
+    background: #1e293b;
+    color: #94a3b8;
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    border-radius: 6px;
+    padding: 0.3rem 0.75rem;
+    cursor: pointer;
+    font-size: 0.8rem;
+    margin-right: 0.75rem;
+    transition: background 0.2s;
+}
+
+.modal-file-input::file-selector-button:hover {
+    background: #334155;
+    color: #f1f5f9;
+}
+
 .resume-sheet {
     background: #fff;
     color: #000;

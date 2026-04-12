@@ -1,3 +1,0 @@
-* **Experience Context Incorporated**:  The candidate's experience at BuildFast LLC and Acme Corp was added to the resume, highlighting relevant projects like webhook integration, database optimization, event-driven pipelines, and observability platform development. 
-* **Domain Emphasis**: The summary and experience sections were tweaked to emphasize Mike's work in financial services and payment processing, aligning it more closely with Marqeta's focus.
-* **Technical Skills Highlighted**:  The resume now explicitly mentions Go, Python, Kafka, Prometheus, and Grafana – technologies used at Marqeta.

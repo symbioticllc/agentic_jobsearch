@@ -15,6 +15,13 @@ import (
 	"github.com/leee/agentic-jobs/internal/scraper"
 )
 
+// stripThinkTags removes Qwen3 <think>...</think> chain-of-thought blocks
+// from the raw LLM response before structured parsing begins.
+func stripThinkTags(s string) string {
+	re := regexp.MustCompile(`(?s)<think>.*?</think>`)
+	return strings.TrimSpace(re.ReplaceAllString(s, ""))
+}
+
 // TailoredResult contains all the outputs of the tailoring process
 type TailoredResult struct {
 	Score          int
@@ -132,11 +139,14 @@ RESUME:
 [alterations list]
 `, linkedinUrl, job.Title, job.Company, compStr, job.Description, baseResume, contextBuf.String())
 
-	// 3. Call LLM
-	response, err := llm.Generate(ctx, prompt)
+	// 3. Call LLM (Deep Class for high-fidelity tailoring)
+	rawResponse, err := llm.Generate(ctx, llm.ClassDeep, prompt)
 	if err != nil {
 		return result, fmt.Errorf("llm generate failed: %w", err)
 	}
+
+	// Strip Qwen3 <think>...</think> chain-of-thought blocks before parsing
+	response := stripThinkTags(rawResponse)
 
 	// 4. Parse response
 	result.Score = parseScore(response)
@@ -175,6 +185,12 @@ RESUME:
 		result.TailoredResume = cleanMarkdownTraces(strings.TrimSpace(resumeSplits[1]))
 	} else {
 		result.TailoredResume = cleanMarkdownTraces(strings.TrimSpace(resumeRaw))
+	}
+
+	// Guard: if the LLM failed to produce any resume content, return an error
+	// so the caller does not persist an empty string and mark the job 'completed'.
+	if len(result.TailoredResume) < 100 {
+		return result, fmt.Errorf("LLM response was parsed but TailoredResume is empty or too short (len=%d). Raw response snippet: %.300s", len(result.TailoredResume), response)
 	}
 
 	// 5. Post-generation validation: ensure real company names survived the LLM output
@@ -265,10 +281,21 @@ func parseSubScores(s string) map[string]int {
 }
 
 func parseBrief(s string) string {
-	re := regexp.MustCompile(`(?i)BRIEF:\s*([^\n]+)`)
+	// Capture everything from BRIEF: until the next known section header or end-of-string.
+	// This handles both single-line and multi-line brief outputs from different LLMs.
+	re := regexp.MustCompile(`(?is)BRIEF:\s*(.*?)(?:\n(?:RESUME:|MARKET_SALARY:|SCORE:|SUB_SCORES:|---)|$)`)
 	match := re.FindStringSubmatch(s)
 	if len(match) > 1 {
-		return strings.TrimSpace(match[1])
+		brief := strings.TrimSpace(match[1])
+		if brief != "" {
+			return brief
+		}
+	}
+	// Fallback: grab single line
+	reSingle := regexp.MustCompile(`(?i)BRIEF:\s*([^\n]+)`)
+	matchS := reSingle.FindStringSubmatch(s)
+	if len(matchS) > 1 {
+		return strings.TrimSpace(matchS[1])
 	}
 	return "No brief provided."
 }

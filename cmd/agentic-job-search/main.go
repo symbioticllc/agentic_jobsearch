@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -64,6 +65,7 @@ func main() {
 	if err := llm.InitLLM(); err != nil {
 		log.Printf("LLM init error: %v\n", err)
 	}
+	llm.PreloadModels() // Background NAS → RAM warm-up; pins both models with keep_alive=-1
 
 	if err := os.MkdirAll("./data", 0755); err != nil {
 		log.Fatalf("Failed to create data directory: %v", err)
@@ -74,16 +76,20 @@ func main() {
 	}
 	defer db.Close()
 
-	// Ingest base context
+	// Ingest base context in the background — don't block server startup
+	// (nomic-embed-text may need to cold-load from NAS which takes time)
 	if ragPipeline != nil {
-		if _, err := os.Stat(projectHistoryPath); err == nil {
-			fmt.Println("📚 Ingesting project history into RAG...")
-			_, err := ragPipeline.IngestDocument(ctx, "project_history", projectHistoryPath)
-			if err != nil {
-				log.Printf("⚠️ Project history ingest error: %v", err)
+		go func() {
+			if _, err := os.Stat(projectHistoryPath); err == nil {
+				fmt.Println("📚 Background: Ingesting project history into RAG...")
+				_, err := ragPipeline.IngestDocument(context.Background(), "project_history", projectHistoryPath)
+				if err != nil {
+					log.Printf("⚠️ Project history ingest error: %v", err)
+				} else {
+					fmt.Println("📚 Background: Project history ingestion complete.")
+				}
 			}
-		}
-
+		}()
 	}
 
 	srv := &server{
@@ -105,6 +111,7 @@ func main() {
 	mux.HandleFunc("POST /api/scrape", authMiddleware(srv.handleScrapeJobs))
 	mux.HandleFunc("POST /api/scrape/stop", authMiddleware(srv.handleStopScrape))
 	mux.HandleFunc("POST /api/jobs/tailor/{id}", authMiddleware(srv.handleTailorJob))
+	mux.HandleFunc("GET /api/jobs/status/{id}", authMiddleware(srv.handleGetTailorStatus))
 	mux.HandleFunc("POST /api/export/gdocs/{id}", authMiddleware(srv.handleGoogleDocsExport))
 	mux.HandleFunc("GET /api/jobs/search", authMiddleware(srv.handleSearchJobs))
 	mux.HandleFunc("GET /api/resumes", authMiddleware(srv.handleListResumes))
@@ -113,6 +120,13 @@ func main() {
 	mux.HandleFunc("GET /api/profile", authMiddleware(srv.handleGetProfile))
 	mux.HandleFunc("POST /api/profile", authMiddleware(srv.handleSaveProfile))
 	mux.HandleFunc("POST /api/profile/upload", authMiddleware(srv.handleUploadProfileFile))
+
+	// Analytics Routes
+	mux.HandleFunc("GET /api/report/companies", authMiddleware(srv.handleCompanyReport))
+	mux.HandleFunc("GET /api/report/sources", authMiddleware(srv.handleSourceReport))
+
+	// System Health Route
+	mux.HandleFunc("GET /api/health", srv.handleHealth)
 
 	fmt.Printf("\n✅ SaaS Architecture online! Available at http://localhost%s\n", port)
 	if err := http.ListenAndServe(port, mux); err != nil {
@@ -402,15 +416,12 @@ func (s *server) handleTailorJob(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	// Directory traversal protection explicitly isolated within Tenant Box
-	// Fallback chain: tenant upload → root base_resume.md → project_history.md
 	templatePath := filepath.Join("./experience", userID, templateName)
 	baseResumeRaw, err := os.ReadFile(templatePath)
 	if err != nil {
-		// Fallback 1: root-level base_resume.md
 		baseResumeRaw, err = os.ReadFile(filepath.Join(".", templateName))
 	}
 	if err != nil {
-		// Fallback 2: project_history.md as last resort
 		baseResumeRaw, err = os.ReadFile(projectHistoryPath)
 	}
 	if err != nil {
@@ -423,24 +434,50 @@ func (s *server) handleTailorJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Printf("📝 Tailoring resume for %s @ %s using %s [Tenant: %s]\n", job.Title, job.Company, templateName, userID)
-	ctx := context.Background()
+	// Update status to processing
+	if err := s.db.UpdateTailoringStatus(userID, id, "processing"); err != nil {
+		log.Printf("⚠️ Failed to update tailoring status: %v\n", err)
+	}
 
-	linkedInUrl, _ := s.db.GetSetting(userID, "linkedin_url")
+	fmt.Printf("📝 Background Tailoring initiated for %s @ %s [Tenant: %s]\n", job.Title, job.Company, userID)
 	
-	result, err := s.aligner.TailorResume(ctx, job, string(baseResumeRaw), linkedInUrl)
+	// Kick off background tailoring
+	go func() {
+		ctx := context.Background()
+		linkedInUrl, _ := s.db.GetSetting(userID, "linkedin_url")
+		
+		result, err := s.aligner.TailorResume(ctx, job, string(baseResumeRaw), linkedInUrl)
+		if err != nil {
+			log.Printf("❌ Background tailoring failed for %s: %v\n", id, err)
+			s.db.UpdateTailoringStatus(userID, id, "failed")
+			return
+		}
+
+		if err := s.db.SaveTailoredResult(userID, job.ID, result.TailoredResume, result.Report, result.FitBrief, result.MarketSalary, result.Score, result.CoverLetter); err != nil {
+			log.Printf("⚠️ Failed to persist tailoring data: %v\n", err)
+			s.db.UpdateTailoringStatus(userID, id, "failed")
+		}
+		fmt.Printf(" ✅ Tailoring complete for %s\n", id)
+	}()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(map[string]string{"status": "processing", "job_id": id})
+}
+
+// GET /api/jobs/status/{id}
+func (s *server) handleGetTailorStatus(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	userID := r.Context().Value("user_id").(string)
+
+	job, err := s.db.GetJobByID(userID, id)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("tailor error: %v", err), http.StatusInternalServerError)
+		http.Error(w, "job not found", http.StatusNotFound)
 		return
 	}
 
-	// Persist generated alignment securely to the central jobs database
-	if err := s.db.SaveTailoredResult(userID, job.ID, result.TailoredResume, result.Report, result.FitBrief, result.MarketSalary, result.Score, result.CoverLetter); err != nil {
-		log.Printf("⚠️ Failed to explicitly map Tailoring data back to the database: %v\n", err)
-	}
-
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	json.NewEncoder(w).Encode(job)
 }
 
 // POST /api/export/gdocs/{id}
@@ -481,6 +518,163 @@ func (s *server) handleGoogleDocsExport(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"url": url})
+}
+
+// GET /api/health — returns real-time status of all infrastructure components
+func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	type ComponentStatus struct {
+		Status  string `json:"status"`  // "ok" | "degraded" | "error"
+		Detail  string `json:"detail"`
+		Latency string `json:"latency,omitempty"`
+	}
+	type HealthReport struct {
+		Overall    string                       `json:"overall"`
+		Components map[string]ComponentStatus   `json:"components"`
+	}
+
+	components := make(map[string]ComponentStatus)
+	allOk := true
+
+	// ── 1. Ollama ─────────────────────────────────────────────────────────────
+	func() {
+		start := time.Now()
+		resp, err := http.Get("http://127.0.0.1:11434/api/tags")
+		latency := time.Since(start).Milliseconds()
+		if err != nil {
+			allOk = false
+			components["ollama"] = ComponentStatus{Status: "error", Detail: "Ollama unreachable: " + err.Error()}
+			return
+		}
+		defer resp.Body.Close()
+
+		var tags struct {
+			Models []struct {
+				Name string `json:"name"`
+			} `json:"models"`
+		}
+		json.NewDecoder(resp.Body).Decode(&tags)
+
+		// Check if our target model is installed
+		modelInstalled := false
+		var installedNames []string
+		for _, m := range tags.Models {
+			installedNames = append(installedNames, m.Name)
+			if strings.HasPrefix(m.Name, "qwen3:30b-a3b") {
+				modelInstalled = true
+			}
+		}
+		if !modelInstalled {
+			allOk = false
+			components["ollama"] = ComponentStatus{
+				Status:  "degraded",
+				Detail:  fmt.Sprintf("qwen3:30b-a3b not found. Installed: %s", strings.Join(installedNames, ", ")),
+				Latency: fmt.Sprintf("%dms", latency),
+			}
+			return
+		}
+
+		// Check if qwen3 is currently loaded (running) via /api/ps
+		loaded := false
+		psResp, psErr := http.Get("http://127.0.0.1:11434/api/ps")
+		if psErr == nil {
+			defer psResp.Body.Close()
+			var ps struct {
+				Models []struct {
+					Name string `json:"name"`
+				} `json:"models"`
+			}
+			json.NewDecoder(psResp.Body).Decode(&ps)
+			for _, m := range ps.Models {
+				if strings.HasPrefix(m.Name, "qwen3:30b-a3b") {
+					loaded = true
+				}
+			}
+		}
+
+		status := "ok"
+		detail := "qwen3:30b-a3b installed"
+		if loaded {
+			detail = "qwen3:30b-a3b ✓ loaded in memory"
+		} else {
+			status = "degraded"
+			detail = "qwen3:30b-a3b installed but not yet loaded (preload in progress)"
+		}
+		components["ollama"] = ComponentStatus{Status: status, Detail: detail, Latency: fmt.Sprintf("%dms", latency)}
+	}()
+
+	// ── 2. Redis ──────────────────────────────────────────────────────────────
+	func() {
+		start := time.Now()
+		conn, err := net.DialTimeout("tcp", "127.0.0.1:6379", 2*time.Second)
+		latency := time.Since(start).Milliseconds()
+		if err != nil {
+			allOk = false
+			components["redis"] = ComponentStatus{Status: "error", Detail: "Redis unreachable on :6379 — start with: docker start agentic-redis"}
+			return
+		}
+		conn.Close()
+		components["redis"] = ComponentStatus{Status: "ok", Detail: "Redis Stack reachable on :6379", Latency: fmt.Sprintf("%dms", latency)}
+	}()
+
+	// ── 3. SQLite ─────────────────────────────────────────────────────────────
+	func() {
+		if s.db == nil {
+			allOk = false
+			components["sqlite"] = ComponentStatus{Status: "error", Detail: "SQLite store not initialized"}
+			return
+		}
+		components["sqlite"] = ComponentStatus{Status: "ok", Detail: "SQLite database online at ./data/jobs.db"}
+	}()
+
+	// ── 4. Cloud Failovers ────────────────────────────────────────────────────
+	if os.Getenv("GEMINI_API_KEY") != "" {
+		components["gemini"] = ComponentStatus{Status: "ok", Detail: "GEMINI_API_KEY configured"}
+	} else {
+		components["gemini"] = ComponentStatus{Status: "degraded", Detail: "GEMINI_API_KEY not set (optional failover)"}
+	}
+	if os.Getenv("ANTHROPIC_API_KEY") != "" {
+		components["claude"] = ComponentStatus{Status: "ok", Detail: "ANTHROPIC_API_KEY configured"}
+	} else {
+		components["claude"] = ComponentStatus{Status: "degraded", Detail: "ANTHROPIC_API_KEY not set (optional failover)"}
+	}
+
+	overall := "ok"
+	if !allOk {
+		overall = "degraded"
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(HealthReport{Overall: overall, Components: components})
+}
+
+// GET /api/report/companies — returns per-company totals for the authenticated tenant
+func (s *server) handleCompanyReport(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value("user_id").(string)
+	report, err := s.db.GetCompanyReport(userID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if report == nil {
+		report = []store.CompanyReportRow{} // return empty array, not null
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(report)
+}
+
+// GET /api/report/sources — returns per-scraper-source job counts for the authenticated tenant
+func (s *server) handleSourceReport(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value("user_id").(string)
+	counts, err := s.db.CountBySource(userID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if counts == nil {
+		counts = map[string]int{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(counts)
 }
 
 // loadTargetCompanies reads all txt files in the given directory and returns a unified list of company names

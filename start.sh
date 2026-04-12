@@ -43,4 +43,13 @@ fi
 # 3. Compile and Run the Go Backend server
 echo ""
 echo "🚀 Booting up the Agentic Server natively..."
+
+# Clear any stale process holding port 8081 from a previous session
+STALE_PID=$(lsof -ti :8081 2>/dev/null)
+if [ -n "$STALE_PID" ]; then
+    echo " -> Clearing stale process on :8081 (PID $STALE_PID)..."
+    kill -9 $STALE_PID 2>/dev/null
+    sleep 0.5
+fi
+
 go run ./cmd/agentic-job-search/main.go

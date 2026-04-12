@@ -100,17 +100,32 @@ func (d *DirectScraper) Scrape(ctx context.Context, query SearchQuery) ([]Job, e
 // tryATS tries to hit common ATS APIs by guessing the company slug
 func (d *DirectScraper) tryATS(company string, query SearchQuery) ([]Job, bool) {
 	slug := sanitizeSlug(company)
-	
-	// 1. Greenhouse
-	ghJobs, ok := d.scrapeGreenhouse(slug, company, query)
-	if ok && len(ghJobs) > 0 {
-		return ghJobs, true
+	// Also try with dashes preserved for companies like "jp-morgan" vs "jpmorgan"
+	dashSlug := sanitizeSlugWithDashes(company)
+
+	slugsToTry := []string{slug}
+	if dashSlug != slug {
+		slugsToTry = append(slugsToTry, dashSlug)
 	}
 
-	// 2. Lever
-	levJobs, ok := d.scrapeLever(slug, company, query)
-	if ok && len(levJobs) > 0 {
-		return levJobs, true
+	for _, s := range slugsToTry {
+		// 1. Greenhouse
+		ghJobs, ok := d.scrapeGreenhouse(s, company, query)
+		if ok && len(ghJobs) > 0 {
+			return ghJobs, true
+		}
+
+		// 2. Lever
+		levJobs, ok := d.scrapeLever(s, company, query)
+		if ok && len(levJobs) > 0 {
+			return levJobs, true
+		}
+
+		// 3. Ashby
+		aJobs, ok := d.scrapeAshby(s, company, query)
+		if ok && len(aJobs) > 0 {
+			return aJobs, true
+		}
 	}
 
 	return nil, false
@@ -195,6 +210,22 @@ func sanitizeSlug(s string) string {
 	return s
 }
 
+// sanitizeSlugWithDashes preserves word boundaries as dashes (e.g. "JP Morgan" -> "jp-morgan")
+func sanitizeSlugWithDashes(s string) string {
+	s = strings.ToLower(s)
+	s = strings.TrimSpace(s)
+	// Replace common separators with a single dash
+	re := regexp.MustCompile(`[\s.,;:&]+`)
+	s = re.ReplaceAllString(s, "-")
+	// Remove any remaining non-alphanumeric/dash characters
+	re2 := regexp.MustCompile(`[^a-z0-9-]`)
+	s = re2.ReplaceAllString(s, "")
+	// Collapse multiple dashes
+	re3 := regexp.MustCompile(`-{2,}`)
+	s = re3.ReplaceAllString(s, "-")
+	return strings.Trim(s, "-")
+}
+
 type leverResponse []struct {
 	ID    string `json:"id"`
 	Text  string `json:"text"`
@@ -243,6 +274,68 @@ func (d *DirectScraper) scrapeLever(slug, realCompanyName string, query SearchQu
 				Source:      "lever",
 				Remote:      strings.Contains(strings.ToLower(j.Categories.Location), "remote"),
 				ScrapedAt:   time.Now(),
+			})
+		}
+	}
+	return out, true
+}
+
+// Ashby ATS response structures
+type ashbyResponse struct {
+	JobPostings []struct {
+		ID           string `json:"id"`
+		Title        string `json:"title"`
+		LocationName string `json:"locationName"`
+		JobURL       string `json:"jobUrl"`
+		DescriptionSections []struct {
+			Content string `json:"content"`
+		} `json:"descriptionSections"`
+	} `json:"jobPostings"`
+}
+
+func (d *DirectScraper) scrapeAshby(slug, realCompanyName string, query SearchQuery) ([]Job, bool) {
+	api := fmt.Sprintf("https://api.ashbyhq.com/posting-api/job-board/%s", slug)
+	req, _ := http.NewRequest("GET", api, nil)
+	req.Header.Set("Accept", "application/json")
+	resp, err := d.client.Do(req)
+	if err != nil || resp.StatusCode != 200 {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		return nil, false
+	}
+	defer resp.Body.Close()
+
+	var res ashbyResponse
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, false
+	}
+
+	var out []Job
+	for _, j := range res.JobPostings {
+		// Join all description sections
+		var descParts []string
+		for _, sec := range j.DescriptionSections {
+			if sec.Content != "" {
+				descParts = append(descParts, stripHTML(sec.Content))
+			}
+		}
+		desc := strings.Join(descParts, "\n")
+
+		if matchesQuery(j.Title, desc, nil, realCompanyName, query) {
+			comp := extractHNCompensation(desc)
+			locLower := strings.ToLower(j.LocationName)
+			out = append(out, Job{
+				ID:           "ashby-" + j.ID,
+				Title:        j.Title,
+				Company:      realCompanyName,
+				Location:     j.LocationName,
+				Description:  desc,
+				Compensation: comp,
+				URL:          j.JobURL,
+				Source:       "ashby",
+				Remote:       strings.Contains(locLower, "remote"),
+				ScrapedAt:    time.Now(),
 			})
 		}
 	}

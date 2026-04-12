@@ -15,6 +15,75 @@ document.addEventListener('DOMContentLoaded', () => {
     let minCompValue = 0;
     let availableResumes = [];
     let activeTenant = localStorage.getItem("tenant_id");
+    let reportData = [];
+
+    // ── Startup Health Poller ─────────────────────────────────────────────────
+    // Polls /api/health immediately on page load. Shows a banner while core
+    // components are still initializing (Ollama loading qwen3 from NAS, etc.)
+    // and auto-dismisses once everything is green.
+    const banner      = document.getElementById('startup-banner');
+    const bannerMsg   = document.getElementById('startup-message');
+    const bannerDetail= document.getElementById('startup-detail');
+    const healthDot   = document.getElementById('health-dot');
+    let startupPoller = null;
+    let systemReady   = false;
+
+    function updateHealthDot(overall) {
+        const colors = { ok: '#10b981', degraded: '#f59e0b', error: '#ef4444' };
+        healthDot.style.background = colors[overall] || '#f59e0b';
+    }
+
+    async function pollStartupHealth() {
+        try {
+            const res = await fetch('/api/health');
+            if (!res.ok) throw new Error('not ready');
+            const data = await res.json();
+            updateHealthDot(data.overall);
+
+            const ollama  = data.components?.ollama  || {};
+            const redis   = data.components?.redis   || {};
+            const sqlite  = data.components?.sqlite  || {};
+
+            // Build a human-readable status line
+            const issues = [];
+            if (ollama.status !== 'ok')  issues.push(ollama.status === 'error'    ? '🧠 Ollama unreachable' : '🧠 qwen3 loading into memory...');
+            if (redis.status  === 'error') issues.push('⚡ Redis offline');
+            if (sqlite.status === 'error') issues.push('🗄️ SQLite error');
+
+            if (issues.length === 0 && data.overall === 'ok') {
+                // Everything ready — flash green and hide banner
+                bannerMsg.textContent = '✅ All systems ready';
+                bannerMsg.style.color = '#10b981';
+                bannerDetail.textContent = '';
+                banner.style.display = 'flex';
+                if (startupPoller) clearInterval(startupPoller);
+                systemReady = true;
+                setTimeout(() => { banner.style.display = 'none'; }, 2500);
+            } else {
+                banner.style.display = 'flex';
+                bannerMsg.style.color = '';
+                bannerMsg.textContent = issues.length ? issues.join('  ·  ') : 'Warming up...';
+                // Show latency if available
+                bannerDetail.textContent = ollama.latency ? `Ollama ${ollama.latency}` : '';
+            }
+        } catch(e) {
+            // Server not yet reachable — keep polling silently
+            banner.style.display = 'flex';
+            bannerMsg.style.color = '';
+            bannerMsg.textContent = '⏳ Waiting for server...';
+            bannerDetail.textContent = '';
+            healthDot.style.background = '#ef4444';
+        }
+    }
+
+    // Start polling immediately — every 4 seconds until ready
+    banner.style.display = 'flex';
+    pollStartupHealth();
+    startupPoller = setInterval(async () => {
+        if (!systemReady) await pollStartupHealth();
+        else clearInterval(startupPoller);
+    }, 4000);
+
 
     // Override Global Fetch
     const originalFetch = window.fetch;
@@ -36,6 +105,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!activeTenant) {
         authModal.showModal();
     } else {
+        // Test connectivity and clear session if stale
         fetchJobs();
         fetchResumes();
     }
@@ -56,6 +126,12 @@ document.addEventListener('DOMContentLoaded', () => {
     function fetchResumes() {
         fetch('/api/resumes')
             .then(async r => {
+                if (r.status === 401 || r.status === 403) {
+                     localStorage.removeItem("tenant_id");
+                     activeTenant = null;
+                     authModal.showModal();
+                     return;
+                }
                 if (!r.ok) throw new Error(await r.text());
                 return r.json();
             })
@@ -302,7 +378,10 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             jobListEl.innerHTML = '<div class="empty-state">Loading jobs...</div>';
             const res = await fetch('/api/jobs');
-            if (!res.ok) throw new Error('Network response not ok');
+            if (!res.ok) {
+                const text = await res.text();
+                throw new Error(`Fetch error ${res.status}: ${text}`);
+            }
             jobsData = await res.json();
             
             if(!jobsData || jobsData.length === 0) {
@@ -314,6 +393,12 @@ document.addEventListener('DOMContentLoaded', () => {
             renderJobList();
         } catch(e) {
             console.error("Fetch jobs error", e);
+            if (e.message.includes("401") || e.message.includes("403") || e.message.includes("Identity Token Required")) {
+                localStorage.removeItem("tenant_id");
+                activeTenant = null;
+                authModal.showModal();
+                return;
+            }
             jobListEl.innerHTML = '<div class="empty-state" style="color:#ef4444;">Failed to load jobs.</div>';
         }
     }
@@ -430,6 +515,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 <div id="tailored-output"></div>
 
+                <div id="tailor-polling-overlay" style="display:none; padding: 2rem; background: rgba(0,0,0,0.2); border-radius: 12px; border: 1px dashed rgba(255,255,255,0.1); text-align: center; margin-bottom: 2rem;">
+                    <div class="loader" style="width: 40px; height: 40px; border: 4px solid rgba(255,255,255,0.1); border-top: 4px solid #60a5fa; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 1rem;"></div>
+                    <div style="font-weight: 600; color: #60a5fa; margin-bottom: 0.5rem;">Qwen3 is thinking...</div>
+                    <div style="font-size: 0.85rem; color: var(--text-muted);">Qwen3 30B-A3B (MoE) is aligning your project history to this role.<br/>This usually takes 20-30 seconds.</div>
+                </div>
+
                 <h3>Original Description</h3>
                 <br/>
                 <div class="jd-box">${job.description.replace(/\n/g, '<br/>')}</div>
@@ -459,7 +550,7 @@ document.addEventListener('DOMContentLoaded', () => {
             statusArea.innerHTML = `
                 <div style="display: flex; gap: 1.5rem; align-items: center; align-content: center; flex-wrap: wrap;">
                     <div class="score-hud" style="text-align: center;">
-                        <span class="val" style="font-size: 2.5rem; font-weight: 800; color: #10b981; display: block; line-height: 1;">${cachedResult.Score || 0}%</span>
+                        <span class="val" style="font-size: 2.5rem; font-weight: 800; color: #10b981; display: block; line-height: 1;">${(cachedResult.Score || job.score || 0)}%</span>
                         <span class="label" style="font-size: 0.8rem; font-weight: 600; text-transform: uppercase; color: var(--text-muted); letter-spacing: 1px;">Holistic Fit</span>
                     </div>
                     <div style="display: flex; flex-direction: column; gap: 0.25rem; border-left: 2px solid rgba(255,255,255,0.1); padding-left: 1.5rem;">
@@ -486,19 +577,71 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="resume-preview">${marked.parse(cachedResult.Report)}</div>
                 <br/>
             `;
-            
-            // Re-bind Export modal hooks for cached object
+
+            // Wire up export button for cached results
             const exportBtn = document.getElementById('open-export-modal-btn');
             exportBtn.style.display = 'inline-flex';
             exportBtn.onclick = () => {
                 const modal = document.getElementById('resume-modal');
                 const printHtml = document.getElementById('tailored-resume-html');
-                // Dynamically join the cover letter text block underneath the resume explicitly inside the native print buffer
-                const clHtml = cachedResult.CoverLetter ? `<h2>Cover Letter</h2>` + marked.parse(sanitizeMarkdown(cachedResult.CoverLetter)) + `<hr />` : '';
-                printHtml.innerHTML = clHtml + marked.parse(sanitizeMarkdown(cachedResult.TailoredResume));
+                const clGenHtml = cachedResult.CoverLetter ? `<h2>Cover Letter</h2>` + marked.parse(sanitizeMarkdown(cachedResult.CoverLetter)) + `<hr />` : '';
+                printHtml.innerHTML = clGenHtml + marked.parse(sanitizeMarkdown(cachedResult.TailoredResume));
                 modal.showModal();
             };
+
+        } else if (job.tailoring_status === 'processing') {
+            document.getElementById('tailor-polling-overlay').style.display = 'block';
+            document.getElementById('run-tailor-btn').disabled = true;
+            document.getElementById('run-tailor-btn').innerHTML = '<span class="icon">⏳</span> Processing...';
+            startPolling(job.id);
         }
+    }
+
+    function startPolling(id) {
+        if (window._tailorPollingInterval) clearInterval(window._tailorPollingInterval);
+        
+        window._tailorPollingInterval = setInterval(async () => {
+            try {
+                const res = await fetch(`/api/jobs/status/${id}`);
+                const job = await res.json();
+                
+                if (job.tailoring_status === 'completed') {
+                    clearInterval(window._tailorPollingInterval);
+                    document.getElementById('tailor-polling-overlay').style.display = 'none';
+                    // Update the local data
+                    const idx = jobsData.findIndex(j => j.id === id);
+                    if (idx !== -1) jobsData[idx] = job;
+                    
+                    // Re-render if still looking at this job
+                    if (activeJobId === id) {
+                        if (!job.tailored_resume || job.tailored_resume.length < 100) {
+                            // Parsing failed on backend — show an actionable error
+                            document.getElementById('tailored-output').innerHTML = `
+                                <div style="padding: 1.5rem; border: 1px solid rgba(239,68,68,0.4); border-radius: 10px; background: rgba(239,68,68,0.08); color: #fca5a5;">
+                                    <strong>⚠️ Tailoring Completed But Resume Parse Failed</strong>
+                                    <p style="margin-top: 0.5rem; font-size: 0.9rem;">The LLM completed but the structured output could not be extracted.  This usually means the model ignored the required format markers. Try clicking <em>Re-Tailor</em> — a second attempt typically succeeds.</p>
+                                </div>`;
+                            document.getElementById('run-tailor-btn').innerHTML = '<span class="icon">✨</span> Re-Tailor';
+                            document.getElementById('run-tailor-btn').disabled = false;
+                        } else {
+                            selectJob(id);
+                        }
+                    }
+                } else if (job.tailoring_status === 'failed') {
+                    clearInterval(window._tailorPollingInterval);
+                    document.getElementById('tailor-polling-overlay').style.display = 'none';
+                    document.getElementById('tailored-output').innerHTML = `
+                        <div style="padding: 1.5rem; border: 1px solid rgba(239,68,68,0.4); border-radius: 10px; background: rgba(239,68,68,0.08); color: #fca5a5;">
+                            <strong>❌ Tailoring Failed</strong>
+                            <p style="margin-top: 0.5rem; font-size: 0.9rem;">The backend LLM process failed. Make sure Ollama is running, or that your GEMINI_API_KEY / ANTHROPIC_API_KEY is set. Click <em>Re-Tailor</em> to retry.</p>
+                        </div>`;
+                    document.getElementById('run-tailor-btn').innerHTML = '<span class="icon">✨</span> Re-Tailor';
+                    document.getElementById('run-tailor-btn').disabled = false;
+                }
+            } catch (e) {
+                console.error("Polling error", e);
+            }
+        }, 3000);
     }
 
     async function runTailor(id) {
@@ -519,6 +662,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             const res = await fetch(`/api/jobs/tailor/${id}${templateQuery}`, { method: 'POST' });
+            if(res.status === 202) {
+                // Accepted for background processing
+                document.getElementById('tailor-polling-overlay').style.display = 'block';
+                const jobIndex = jobsData.findIndex(j => j.id === id);
+                if(jobIndex !== -1) jobsData[jobIndex].tailoring_status = 'processing';
+                startPolling(id);
+                return;
+            }
+            
             if(!res.ok) {
                 const errText = await res.text();
                 throw new Error(errText.trim() || "Tailor failed on backend");
@@ -713,4 +865,173 @@ document.addEventListener('DOMContentLoaded', () => {
              .replace(/"/g, "&quot;")
              .replace(/'/g, "&#039;");
     }
+
+    // ── Company Report Modal ──────────────────────────────────────────────────
+    const reportModal = document.getElementById('report-modal');
+
+    document.getElementById('open-report-btn').addEventListener('click', async () => {
+        reportModal.showModal();
+        await fetchAndRenderReport();
+    });
+
+    document.getElementById('close-report-modal-btn').addEventListener('click', () => {
+        reportModal.close();
+    });
+
+    async function fetchAndRenderReport() {
+        const tbody = document.getElementById('report-table-body');
+        const badge = document.getElementById('report-total-badge');
+        const sourceEl = document.getElementById('source-breakdown');
+        tbody.innerHTML = '<tr><td colspan="3" style="padding: 2rem; text-align: center; color: var(--text-muted);">Loading...</td></tr>';
+        badge.textContent = '';
+        sourceEl.innerHTML = '';
+
+        const sourceMeta = {
+            'remoteok':      { label: 'RemoteOK',         icon: '🌐' },
+            'hn':            { label: 'HN Who\'s Hiring',  icon: '🟠' },
+            'greenhouse':    { label: 'Greenhouse',        icon: '🌿' },
+            'lever':         { label: 'Lever',             icon: '⚙️' },
+            'ashby':         { label: 'Ashby',             icon: '🔷' },
+            'agent-crawler': { label: 'Agent Crawler',     icon: '🤖' },
+        };
+
+        try {
+            const [reportRes, sourceRes] = await Promise.all([
+                fetch('/api/report/companies'),
+                fetch('/api/report/sources'),
+            ]);
+
+            // ── Source breakdown pills ──────────────────────────────────────
+            if (sourceRes.ok) {
+                const sources = await sourceRes.json();
+                const totalScraped = Object.values(sources).reduce((a, b) => a + b, 0);
+                if (Object.keys(sources).length > 0) {
+                    sourceEl.innerHTML = Object.entries(sources).map(([src, count]) => {
+                        const meta = sourceMeta[src] || { label: src, icon: '📋' };
+                        return `<div style="display:inline-flex;align-items:center;gap:0.4rem;padding:0.3rem 0.75rem;border-radius:99px;background:rgba(96,165,250,0.1);border:1px solid rgba(96,165,250,0.25);font-size:0.8rem;">
+                            <span>${meta.icon}</span>
+                            <span style="color:#94a3b8;">${meta.label}</span>
+                            <strong style="color:#60a5fa;">${count}</strong>
+                        </div>`;
+                    }).join('') + `<div style="display:inline-flex;align-items:center;gap:0.4rem;padding:0.3rem 0.75rem;border-radius:99px;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.25);font-size:0.8rem;">
+                        <span>📊</span><span style="color:#94a3b8;">Total</span><strong style="color:#10b981;">${totalScraped}</strong>
+                    </div>`;
+                }
+            }
+
+            // ── Company table ───────────────────────────────────────────────
+            if (!reportRes.ok) throw new Error(await reportRes.text());
+            reportData = await reportRes.json();
+            if (!reportData) reportData = [];
+
+            if (reportData.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="3" style="padding: 2rem; text-align: center; color: var(--text-muted);">No data yet. Run a scrape first.</td></tr>';
+                return;
+            }
+
+            const totalJobs = reportData.reduce((s, r) => s + r.total_jobs, 0);
+            const totalTailored = reportData.reduce((s, r) => s + r.tailored_count, 0);
+            badge.textContent = `${reportData.length} companies · ${totalJobs} jobs · ${totalTailored} tailored`;
+
+            tbody.innerHTML = reportData.map((row, i) => {
+                const rowBg = i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent';
+                const tailoredColor = row.tailored_count > 0 ? '#10b981' : 'var(--text-muted)';
+                return `<tr style="border-bottom: 1px solid rgba(255,255,255,0.05); background: ${rowBg};">
+                    <td style="padding: 0.65rem 1.25rem; color: #e2e8f0;">${escapeHtml(row.company)}</td>
+                    <td style="padding: 0.65rem 1.25rem; text-align: right; font-weight: 600; color: #60a5fa;">${row.total_jobs}</td>
+                    <td style="padding: 0.65rem 1.25rem; text-align: right; font-weight: 700; color: ${tailoredColor};">${row.tailored_count > 0 ? '✅ ' + row.tailored_count : '—'}</td>
+                </tr>`;
+            }).join('');
+
+        } catch(e) {
+            console.error(e);
+            tbody.innerHTML = `<tr><td colspan="3" style="padding: 2rem; text-align: center; color: #ef4444;">Failed to load report: ${e.message}</td></tr>`;
+        }
+    }
+
+
+    document.getElementById('export-report-csv-btn').addEventListener('click', () => {
+        if (!reportData || reportData.length === 0) {
+            alert('No data to export. Open the report first.');
+            return;
+        }
+        const header = 'Company,Jobs Found,Resumes Tailored';
+        const rows = reportData.map(r =>
+            `"${(r.company || '').replace(/"/g, '""')}",${r.total_jobs},${r.tailored_count}`
+        );
+        const csvContent = [header, ...rows].join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const d = new Date();
+        a.href = url;
+        a.download = `job-search-report-${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+    // ── System Health Modal ───────────────────────────────────────────────────
+    const healthModal = document.getElementById('health-modal');
+
+    document.getElementById('open-health-btn').addEventListener('click', async () => {
+        healthModal.showModal();
+        await fetchHealth();
+    });
+
+    document.getElementById('close-health-btn').addEventListener('click', () => healthModal.close());
+    document.getElementById('refresh-health-btn').addEventListener('click', fetchHealth);
+
+    async function fetchHealth() {
+        const listEl = document.getElementById('health-component-list');
+        const overallEl = document.getElementById('health-overall-badge');
+        listEl.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:2rem;">Checking...</div>';
+        overallEl.textContent = '';
+
+        try {
+            const res = await fetch('/api/health');
+            if (!res.ok) throw new Error('Health endpoint returned ' + res.status);
+            const data = await res.json();
+
+            const overallOk = data.overall === 'ok';
+            updateHealthDot(data.overall);
+            overallEl.textContent = overallOk ? '✅ All Systems Operational' : '⚠️ Degraded — Check components below';
+            overallEl.style.color = overallOk ? '#10b981' : '#f59e0b';
+
+            const componentMeta = {
+                ollama:  { label: 'Ollama (qwen3:30b-a3b)', icon: '🧠' },
+                redis:   { label: 'Redis Stack',            icon: '⚡' },
+                sqlite:  { label: 'SQLite Database',        icon: '🗄️' },
+                gemini:  { label: 'Gemini (Cloud Failover)',icon: '☁️' },
+                claude:  { label: 'Claude (Cloud Failover)',icon: '☁️' },
+            };
+
+            const statusColor = { ok: '#10b981', degraded: '#f59e0b', error: '#ef4444' };
+            const statusBg    = { ok: 'rgba(16,185,129,0.08)', degraded: 'rgba(245,158,11,0.08)', error: 'rgba(239,68,68,0.08)' };
+            const statusBorder= { ok: 'rgba(16,185,129,0.25)', degraded: 'rgba(245,158,11,0.25)', error: 'rgba(239,68,68,0.25)' };
+            const statusPill  = { ok: '● OK', degraded: '● Degraded', error: '● Error' };
+
+            listEl.innerHTML = Object.entries(data.components).map(([key, comp]) => {
+                const meta = componentMeta[key] || { label: key, icon: '🔧' };
+                const color  = statusColor[comp.status] || '#94a3b8';
+                const bg     = statusBg[comp.status]    || 'rgba(255,255,255,0.03)';
+                const border = statusBorder[comp.status]|| 'rgba(255,255,255,0.1)';
+                const pill   = statusPill[comp.status]  || comp.status;
+                const latency = comp.latency ? `<span style="margin-left:auto;font-size:0.75rem;color:var(--text-muted);font-family:monospace;">${comp.latency}</span>` : '';
+                return `
+                    <div style="display:flex;align-items:center;gap:1rem;padding:0.85rem 1rem;border-radius:10px;background:${bg};border:1px solid ${border};">
+                        <span style="font-size:1.3rem;">${meta.icon}</span>
+                        <div style="flex:1;min-width:0;">
+                            <div style="font-weight:600;font-size:0.9rem;color:#e2e8f0;margin-bottom:0.2rem;">${meta.label}</div>
+                            <div style="font-size:0.8rem;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${comp.detail}</div>
+                        </div>
+                        ${latency}
+                        <span style="font-size:0.75rem;font-weight:700;color:${color};white-space:nowrap;padding:0.2rem 0.6rem;border-radius:99px;background:${bg};border:1px solid ${border};">${pill}</span>
+                    </div>`;
+            }).join('');
+
+        } catch(e) {
+            console.error(e);
+            document.getElementById('health-component-list').innerHTML =
+                `<div style="padding:2rem;text-align:center;color:#ef4444;">Could not reach health endpoint: ${e.message}</div>`;
+        }
+    }
 });
+
