@@ -439,6 +439,8 @@ func (s *server) handleTailorJob(w http.ResponseWriter, r *http.Request) {
 		log.Printf("⚠️ Failed to update tailoring status: %v\n", err)
 	}
 
+	instructions := r.URL.Query().Get("instructions")
+
 	fmt.Printf("📝 Background Tailoring initiated for %s @ %s [Tenant: %s]\n", job.Title, job.Company, userID)
 	
 	// Kick off background tailoring
@@ -446,7 +448,7 @@ func (s *server) handleTailorJob(w http.ResponseWriter, r *http.Request) {
 		ctx := context.Background()
 		linkedInUrl, _ := s.db.GetSetting(userID, "linkedin_url")
 		
-		result, err := s.aligner.TailorResume(ctx, job, string(baseResumeRaw), linkedInUrl)
+		result, err := s.aligner.TailorResume(ctx, job, string(baseResumeRaw), linkedInUrl, instructions)
 		if err != nil {
 			log.Printf("❌ Background tailoring failed for %s: %v\n", id, err)
 			s.db.UpdateTailoringStatus(userID, id, "failed")

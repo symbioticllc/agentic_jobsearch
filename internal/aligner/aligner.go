@@ -46,7 +46,7 @@ func NewAligner(r *rag.RAG) *Aligner {
 }
 
 // TailorResume generates a tailored resume for a given job and returns a structured result
-func (a *Aligner) TailorResume(ctx context.Context, job scraper.Job, baseResume string, linkedinUrl string) (TailoredResult, error) {
+func (a *Aligner) TailorResume(ctx context.Context, job scraper.Job, baseResume string, linkedinUrl string, customInstructions string) (TailoredResult, error) {
 	var result TailoredResult
 
 	// 1. Get relevant context from RAG
@@ -71,8 +71,13 @@ func (a *Aligner) TailorResume(ctx context.Context, job scraper.Job, baseResume 
 	}
 
 	// 2. Formulate the prompt
+	var customInstrBlock string
+	if customInstructions != "" {
+		customInstrBlock = fmt.Sprintf("\n### 🌱 USER REVISION INSTRUCTIONS\nThe candidate explicitly requested the following adjustments for this generation:\n\"%s\"\nMake sure to respect these instructions while maintaining the format constraints.\n", customInstructions)
+	}
+
 	prompt := fmt.Sprintf(`
-You are an expert career coach and technical recruiter. Your task is to analyze a job description and tailor a professional resume.
+You are an expert career coach and technical recruiter. Your task is to analyze a job description and tailor a professional resume.%s
 
 ### IMMUTABLE FACTS — DO NOT CHANGE THESE UNDER ANY CIRCUMSTANCES
 The following elements from the Base Resume are SACRED and must appear EXACTLY as written:
@@ -137,7 +142,7 @@ RESUME:
 [cover letter]
 ---REPORT---
 [alterations list]
-`, linkedinUrl, job.Title, job.Company, compStr, job.Description, baseResume, contextBuf.String())
+`, customInstrBlock, linkedinUrl, job.Title, job.Company, compStr, job.Description, baseResume, contextBuf.String())
 
 	// 3. Call LLM (Deep Class for high-fidelity tailoring)
 	rawResponse, err := llm.Generate(ctx, llm.ClassDeep, prompt)

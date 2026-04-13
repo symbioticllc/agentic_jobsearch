@@ -539,6 +539,9 @@ document.addEventListener('DOMContentLoaded', () => {
                             <span class="icon">📄</span> View & Export
                         </button>
                     </div>
+                    <div id="retailor-instructions-container" style="display:none; flex: 1; max-width: 300px; margin-left: 1rem;">
+                        <input type="text" id="retailor-instructions-input" placeholder="Feedback (e.g. 'Emphasize cloud deployments')" style="width: 100%; padding: 0.5rem 0.75rem; border-radius: 6px; border: 1px solid rgba(255,255,255,0.2); background: rgba(0,0,0,0.2); color: #fff; font-size: 0.85rem;" />
+                    </div>
                     <div class="tailor-status" id="tailor-status-area">
                         <span>Has not been tailored yet.</span>
                     </div>
@@ -563,6 +566,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // If the backend already cached the generation in the DB, prefill the exact layout instantly
         if (job.tailored_resume && job.tailored_resume.length > 0) {
             document.getElementById('run-tailor-btn').innerHTML = '<span class="icon">✨</span> Re-Tailor';
+            document.getElementById('retailor-instructions-container').style.display = 'block';
             
             // Format mock result structure internally
             const cachedResult = {
@@ -679,6 +683,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                     <p style="margin-top: 0.5rem; font-size: 0.9rem;">The LLM completed but the structured output could not be extracted.  This usually means the model ignored the required format markers. Try clicking <em>Re-Tailor</em> — a second attempt typically succeeds.</p>
                                 </div>`;
                             document.getElementById('run-tailor-btn').innerHTML = '<span class="icon">✨</span> Re-Tailor';
+                            document.getElementById('retailor-instructions-container').style.display = 'block';
                             document.getElementById('run-tailor-btn').disabled = false;
                         } else {
                             selectJob(id);
@@ -693,6 +698,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             <p style="margin-top: 0.5rem; font-size: 0.9rem;">The backend LLM process failed. Make sure Ollama is running, or that your GEMINI_API_KEY / ANTHROPIC_API_KEY is set. Click <em>Re-Tailor</em> to retry.</p>
                         </div>`;
                     document.getElementById('run-tailor-btn').innerHTML = '<span class="icon">✨</span> Re-Tailor';
+                    document.getElementById('retailor-instructions-container').style.display = 'block';
                     document.getElementById('run-tailor-btn').disabled = false;
                 }
             } catch (e) {
@@ -715,6 +721,13 @@ document.addEventListener('DOMContentLoaded', () => {
             templateQuery = "?template=" + encodeURIComponent(selectBox.value);
         } else if (availableResumes.length === 1) {
             templateQuery = "?template=" + encodeURIComponent(availableResumes[0]);
+        } else {
+            templateQuery = "?template=base_resume.md";
+        }
+
+        const instrInput = document.getElementById('retailor-instructions-input');
+        if (instrInput && instrInput.value.trim() !== '') {
+            templateQuery += "&instructions=" + encodeURIComponent(instrInput.value.trim());
         }
 
         try {

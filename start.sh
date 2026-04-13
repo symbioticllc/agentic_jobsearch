@@ -7,26 +7,41 @@ echo "   Agentic Job Search - Startup Bootstrapper   "
 echo "==============================================="
 echo ""
 
-# 1. Dependency Checks & Setup
-
-# Source user's shell profile to pick up API keys (ANTHROPIC_API_KEY, GEMINI_API_KEY, etc.)
-[ -f "$HOME/.zshrc" ] && source "$HOME/.zshrc" 2>/dev/null
-
 # Ensure all tools are findable regardless of calling shell / IDE environment
 export PATH="/usr/local/bin:/opt/homebrew/bin:/Applications/Docker.app/Contents/Resources/bin:/Applications/Ollama.app/Contents/MacOS:$PATH"
 export GOPATH="$HOME/go"
 export PATH="$GOPATH/bin:/usr/local/go/bin:$PATH"
 
+# 1. Environment & API Key Management
+if [ -f "$HOME/.zshrc" ]; then
+    source "$HOME/.zshrc" 2>/dev/null
+fi
+
+if [ ! -f "./.env" ]; then
+    echo "⚙️  Initializing environment file..."
+    echo -n "Enter your ANTHROPIC_API_KEY (or press Enter to skip): "
+    read -r ANT_KEY
+    echo -n "Enter your GEMINI_API_KEY (or press Enter to skip): "
+    read -r GEM_KEY
+    echo "ANTHROPIC_API_KEY=\"$ANT_KEY\"" > ./.env
+    echo "GEMINI_API_KEY=\"$GEM_KEY\"" >> ./.env
+    echo " ✅ Generated ./.env"
+    echo ""
+fi
+
+# Apply local .env overrides safely
+set -a
+source ./.env 2>/dev/null
+set +a
+
+# 2. Redis Vector Engine (Docker)
 if ! command -v docker >/dev/null 2>&1; then
     echo "⚠️  WARNING: Docker is not installed or not in PATH."
-    echo "This application uses Redis Stack via Docker for local vector RAG."
-    echo "Please ensure you have Redis-Stack running on port 6379, or install Docker."
+    echo "Please ensure you have Redis-Stack running natively on port 6379, or install Docker."
     echo ""
 else
-    # Check if agentic-redis container is running
     if ! docker ps | grep -q "agentic-redis"; then
         echo " -> Checking Redis Stack Container..."
-        # If it doesn't exist, create and run it
         if ! docker ps -a | grep -q "agentic-redis"; then
             echo " -> Starting Docker Redis Stack Vector Engine for the first time..."
             docker run -d --name agentic-redis -p 6379:6379 -p 8001:8001 redis/redis-stack-server:latest
@@ -39,17 +54,32 @@ else
     fi
 fi
 
-# 2. Check Ollama natively
+# 3. Native Ollama Engine & Model Check
+MODEL_NAME="qwen3:30b-a3b"
 if curl -s -f http://localhost:11434/api/tags > /dev/null; then
     echo " ✅ Ollama LLM provider detected natively on port 11434."
+    echo " -> Verifying core model ($MODEL_NAME) is actively downloaded..."
+    if ! ollama list | grep -q "$MODEL_NAME"; then
+        echo " ⚠️ Core model ($MODEL_NAME) is missing locally."
+        echo " ⏳ Downloading model now (This may take several minutes depending on network)..."
+        ollama pull "$MODEL_NAME"
+        echo " ✅ Model downloaded successfully!"
+    else
+        echo " ✅ Core model ($MODEL_NAME) confirmed locally available."
+    fi
 else
     echo "⚠️  WARNING: Ollama is not actively running on localhost:11434!"
     echo "Make sure Ollama is open natively on your host machine to compile Resumes."
-    echo "If Ollama crashes during execution, the server will fallback to Anthropic (requires API key)."
     echo ""
 fi
 
-# 3. Compile and Run the Go Backend server
+# 4. Check for .gitignore security block
+if ! grep -q "\.env" ./.gitignore 2>/dev/null; then
+    echo ".env" >> ./.gitignore
+    echo "🔒 Protected .env via .gitignore"
+fi
+
+# 5. Compile and Run the Go Backend server
 echo ""
 echo "🚀 Booting up the Agentic Server natively..."
 
