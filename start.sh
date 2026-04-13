@@ -8,6 +8,15 @@ echo "==============================================="
 echo ""
 
 # 1. Dependency Checks & Setup
+
+# Source user's shell profile to pick up API keys (ANTHROPIC_API_KEY, GEMINI_API_KEY, etc.)
+[ -f "$HOME/.zshrc" ] && source "$HOME/.zshrc" 2>/dev/null
+
+# Ensure all tools are findable regardless of calling shell / IDE environment
+export PATH="/usr/local/bin:/opt/homebrew/bin:/Applications/Docker.app/Contents/Resources/bin:/Applications/Ollama.app/Contents/MacOS:$PATH"
+export GOPATH="$HOME/go"
+export PATH="$GOPATH/bin:/usr/local/go/bin:$PATH"
+
 if ! command -v docker >/dev/null 2>&1; then
     echo "⚠️  WARNING: Docker is not installed or not in PATH."
     echo "This application uses Redis Stack via Docker for local vector RAG."

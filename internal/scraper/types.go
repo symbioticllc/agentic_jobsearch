@@ -21,6 +21,9 @@ type Job struct {
 	
 	// Tailored Metadata
 	Score          int       `json:"score"`
+	SubScoreTech   int       `json:"sub_score_tech"`
+	SubScoreDomain int       `json:"sub_score_domain"`
+	SubScoreSenior int       `json:"sub_score_senior"`
 	MarketSalary   string    `json:"market_salary"`
 	FitBrief       string    `json:"fit_brief"`
 	TailoredResume string    `json:"tailored_resume"`

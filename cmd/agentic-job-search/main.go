@@ -453,7 +453,7 @@ func (s *server) handleTailorJob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if err := s.db.SaveTailoredResult(userID, job.ID, result.TailoredResume, result.Report, result.FitBrief, result.MarketSalary, result.Score, result.CoverLetter); err != nil {
+		if err := s.db.SaveTailoredResult(userID, job.ID, result.TailoredResume, result.Report, result.FitBrief, result.MarketSalary, result.Score, result.SubScores["Technical"], result.SubScores["Domain"], result.SubScores["Seniority"], result.CoverLetter); err != nil {
 			log.Printf("⚠️ Failed to persist tailoring data: %v\n", err)
 			s.db.UpdateTailoringStatus(userID, id, "failed")
 		}

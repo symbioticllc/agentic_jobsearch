@@ -80,26 +80,43 @@ document.addEventListener('DOMContentLoaded', () => {
         else clearInterval(startupPoller);
     }, 4000);
 
-
-    // Override Global Fetch
+    // Override Global Fetch safely
     const originalFetch = window.fetch;
     window.fetch = async (...args) => {
-        let [resource, config] = args;
-        if (!config) config = {};
-        if (!config.headers) config.headers = {};
-        if (activeTenant && !resource.toString().includes("http") && resource.toString().startsWith("/api/")) {
-            if (config.headers instanceof Headers) {
-                config.headers.append('Authorization', `Bearer ${activeTenant}`);
-            } else {
-                config.headers['Authorization'] = `Bearer ${activeTenant}`;
+        try {
+            let [resource, config] = args;
+            if (!config) config = {};
+            if (!config.headers) config.headers = {};
+            
+            const rStr = resource ? resource.toString() : "";
+            if (activeTenant && activeTenant !== "null" && !rStr.includes("http") && rStr.startsWith("/api/")) {
+                if (config.headers instanceof Headers) {
+                    if (!config.headers.has('Authorization')) {
+                        config.headers.append('Authorization', `Bearer ${activeTenant}`);
+                    }
+                } else {
+                    if (!config.headers['Authorization'] && !config.headers['authorization']) {
+                        config.headers['Authorization'] = `Bearer ${activeTenant}`;
+                    }
+                }
             }
+            return originalFetch(resource, config);
+        } catch(e) {
+            console.error("fetch override error:", e);
+            return originalFetch(...args);
         }
-        return originalFetch(resource, config);
     };
 
     const authModal = document.getElementById('auth-modal');
+    
+    // Clear dead string artifacts if present
+    if (activeTenant === "null" || activeTenant === "undefined") {
+        activeTenant = null;
+        localStorage.removeItem("tenant_id");
+    }
+
     if (!activeTenant) {
-        authModal.showModal();
+        if (!authModal.open) authModal.showModal();
     } else {
         // Test connectivity and clear session if stale
         fetchJobs();
@@ -118,14 +135,14 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Load available templates
+    // Load available templates safely
     function fetchResumes() {
         fetch('/api/resumes')
             .then(async r => {
                 if (r.status === 401 || r.status === 403) {
                      localStorage.removeItem("tenant_id");
                      activeTenant = null;
-                     authModal.showModal();
+                     if (authModal && !authModal.open) authModal.showModal();
                      return;
                 }
                 if (!r.ok) throw new Error(await r.text());
@@ -237,7 +254,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     scrapeBtn.addEventListener('click', async () => {
-        scrapeBtn.innerHTML = '<span class="icon">⏳</span> Scraping...';
         scrapeBtn.disabled = true;
         stopScrapeBtn.style.display = 'block';
         stopScrapeBtn.innerHTML = '<span class="icon">🛑</span> Stop';
@@ -245,11 +261,23 @@ document.addEventListener('DOMContentLoaded', () => {
         
         const isExecParams = execToggle.checked ? '?exec=true' : '';
         
+        let dots = 0;
+        const progressTexts = ["Initializing Scraper", "Contacting Job Boards", "Parsing Raw Data", "Filtering Irrelevant", "Saving Opportunities", "Finalizing"];
+        let step = 0;
+        const progressInterval = setInterval(() => {
+            dots = (dots + 1) % 4;
+            const ds = ".".repeat(dots);
+            scrapeBtn.innerHTML = `<span class="icon">⏳</span> ${progressTexts[step] || "Working"}${ds}`;
+            if (dots === 3 && step < progressTexts.length - 1) step++;
+        }, 800);
+
         try {
             const res = await fetch('/api/scrape' + isExecParams, { method: 'POST' });
+            clearInterval(progressInterval);
             if(res.ok) {
                 const data = await res.json();
                 alert(`Scraping complete! Added ${data.added} new jobs from ${data.scraped} found.`);
+                scrapeBtn.innerHTML = '<span class="icon">⏳</span> Refreshing dashboard...';
                 fetchJobs();
             } else if (res.status === 408 || res.status === 409 || res.status === 499 || String(res.status).startsWith("4")) {
                 const errText = await res.text();
@@ -259,8 +287,10 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } catch (e) {
             console.error(e);
+            clearInterval(progressInterval);
             alert('Scraping connection dropped explicitly.');
         } finally {
+            clearInterval(progressInterval);
             scrapeBtn.innerHTML = '<span class="icon">🔍</span> Scrape New Jobs';
             scrapeBtn.disabled = false;
             stopScrapeBtn.style.display = 'none';
@@ -285,6 +315,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 jobCountEl.textContent = '0';
             } else {
                 renderJobList();
+                // Auto-select the first job so the user lands on a detail view
+                if (jobsData.length > 0) {
+                    selectJob(jobsData[0].id);
+                }
             }
         } catch(e) {
             console.error(e);
@@ -392,7 +426,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (e.message.includes("401") || e.message.includes("403") || e.message.includes("Identity Token Required")) {
                 localStorage.removeItem("tenant_id");
                 activeTenant = null;
-                authModal.showModal();
+                if (authModal && !authModal.open) authModal.showModal();
+                jobListEl.innerHTML = '<div class="empty-state" style="color:#ef4444;">Please login to view jobs.</div>';
                 return;
             }
             jobListEl.innerHTML = '<div class="empty-state" style="color:#ef4444;">Failed to load jobs.</div>';
@@ -513,7 +548,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 <div id="tailor-polling-overlay" style="display:none; padding: 2rem; background: rgba(0,0,0,0.2); border-radius: 12px; border: 1px dashed rgba(255,255,255,0.1); text-align: center; margin-bottom: 2rem;">
                     <div class="loader" style="width: 40px; height: 40px; border: 4px solid rgba(255,255,255,0.1); border-top: 4px solid #60a5fa; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 1rem;"></div>
-                    <div style="font-weight: 600; color: #60a5fa; margin-bottom: 0.5rem;">Qwen3 is thinking...</div>
+                    <div style="font-weight: 600; color: #60a5fa; margin-bottom: 0.5rem;">Thinking...</div>
                     <div style="font-size: 0.85rem; color: var(--text-muted);">Qwen3 30B-A3B (MoE) is aligning your project history to this role.<br/>This usually takes 20-30 seconds.</div>
                 </div>
 
@@ -532,6 +567,11 @@ document.addEventListener('DOMContentLoaded', () => {
             // Format mock result structure internally
             const cachedResult = {
                 Score: job.score,
+                SubScores: {
+                    Technical: job.sub_score_tech || 0,
+                    Domain: job.sub_score_domain || 0,
+                    Seniority: job.sub_score_senior || 0
+                },
                 MarketSalary: job.market_salary,
                 FitBrief: job.fit_brief,
                 TailoredResume: job.tailored_resume,
@@ -543,12 +583,33 @@ document.addEventListener('DOMContentLoaded', () => {
             const statusArea = document.getElementById('tailor-status-area');
             const outputArea = document.getElementById('tailored-output');
             
+            // Extract subscores with fallbacks
+            const ts = cachedResult.SubScores?.Technical || 0;
+            const ds = cachedResult.SubScores?.Domain || 0;
+            const ss = cachedResult.SubScores?.Seniority || 0;
+
             statusArea.innerHTML = `
                 <div style="display: flex; gap: 1.5rem; align-items: center; align-content: center; flex-wrap: wrap;">
                     <div class="score-hud" style="text-align: center;">
                         <span class="val" style="font-size: 2.5rem; font-weight: 800; color: #10b981; display: block; line-height: 1;">${(cachedResult.Score || job.score || 0)}%</span>
                         <span class="label" style="font-size: 0.8rem; font-weight: 600; text-transform: uppercase; color: var(--text-muted); letter-spacing: 1px;">Holistic Fit</span>
                     </div>
+                    
+                    <div style="display: flex; flex-direction: column; gap: 0.5rem; border-left: 2px solid rgba(255,255,255,0.1); padding-left: 1.5rem;">
+                        <div style="display: flex; justify-content: space-between; gap: 1rem; font-size: 0.85rem;">
+                            <span style="color: var(--text-muted);">Technical</span>
+                            <strong style="color: #60a5fa;">${ts}%</strong>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; gap: 1rem; font-size: 0.85rem;">
+                            <span style="color: var(--text-muted);">Domain</span>
+                            <strong style="color: #60a5fa;">${ds}%</strong>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; gap: 1rem; font-size: 0.85rem;">
+                            <span style="color: var(--text-muted);">Seniority</span>
+                            <strong style="color: #60a5fa;">${ss}%</strong>
+                        </div>
+                    </div>
+
                     <div style="display: flex; flex-direction: column; gap: 0.25rem; border-left: 2px solid rgba(255,255,255,0.1); padding-left: 1.5rem;">
                         <span style="font-size: 0.8rem; font-weight: 600; text-transform: uppercase; color: var(--text-muted); letter-spacing: 1px;">Estimated Market Value</span>
                         <strong style="color: #c084fc; font-size: 1.1rem;">${cachedResult.MarketSalary || "Unknown"}</strong>
@@ -930,11 +991,17 @@ document.addEventListener('DOMContentLoaded', () => {
             badge.textContent = `${reportData.length} companies · ${totalJobs} jobs · ${totalTailored} tailored`;
 
             tbody.innerHTML = reportData.map((row, i) => {
-                const rowBg = i % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent';
-                const tailoredColor = row.tailored_count > 0 ? '#10b981' : 'var(--text-muted)';
-                return `<tr style="border-bottom: 1px solid rgba(255,255,255,0.05); background: ${rowBg};">
-                    <td style="padding: 0.65rem 1.25rem; color: #e2e8f0;">${escapeHtml(row.company)}</td>
-                    <td style="padding: 0.65rem 1.25rem; text-align: right; font-weight: 600; color: #60a5fa;">${row.total_jobs}</td>
+                const rowBg = i % 2 === 0 ? 'rgba(0,0,0,0.03)' : 'transparent';
+                const tailoredColor = row.tailored_count > 0 ? '#10b981' : '#333';
+                const safeCompany = escapeHtml(row.company).replace(/'/g, "\\'");
+                const queryStr = row.tailored_count > 0 ? `${safeCompany} tailored` : safeCompany;
+                return `<tr 
+                    style="border-bottom: 1px solid rgba(0,0,0,0.1); background: ${rowBg}; cursor: pointer; transition: background 0.2s;" 
+                    onmouseover="this.style.background='rgba(96,165,250,0.1)'" 
+                    onmouseout="this.style.background='${rowBg}'"
+                    onclick="document.getElementById('report-modal').close(); document.getElementById('semantic-search-input').value = '${queryStr}'; document.getElementById('semantic-search-btn').click();">
+                    <td style="padding: 0.65rem 1.25rem; color: #000; font-weight: 500; text-decoration: underline;">${escapeHtml(row.company)}</td>
+                    <td style="padding: 0.65rem 1.25rem; text-align: right; font-weight: 700; color: #60a5fa;">${row.total_jobs}</td>
                     <td style="padding: 0.65rem 1.25rem; text-align: right; font-weight: 700; color: ${tailoredColor};">${row.tailored_count > 0 ? '✅ ' + row.tailored_count : '—'}</td>
                 </tr>`;
             }).join('');
@@ -964,6 +1031,8 @@ document.addEventListener('DOMContentLoaded', () => {
         a.download = `job-search-report-${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}.csv`;
         a.click();
         URL.revokeObjectURL(url);
+    });
+
     // ── System Health Modal ───────────────────────────────────────────────────
     const healthModal = document.getElementById('health-modal');
 
@@ -1007,16 +1076,16 @@ document.addEventListener('DOMContentLoaded', () => {
             listEl.innerHTML = Object.entries(data.components).map(([key, comp]) => {
                 const meta = componentMeta[key] || { label: key, icon: '🔧' };
                 const color  = statusColor[comp.status] || '#94a3b8';
-                const bg     = statusBg[comp.status]    || 'rgba(255,255,255,0.03)';
-                const border = statusBorder[comp.status]|| 'rgba(255,255,255,0.1)';
+                const bg     = statusBg[comp.status]    || 'rgba(0,0,0,0.03)';
+                const border = statusBorder[comp.status]|| 'rgba(0,0,0,0.1)';
                 const pill   = statusPill[comp.status]  || comp.status;
-                const latency = comp.latency ? `<span style="margin-left:auto;font-size:0.75rem;color:var(--text-muted);font-family:monospace;">${comp.latency}</span>` : '';
+                const latency = comp.latency ? `<span style="margin-left:auto;font-size:0.75rem;color:#4a4a4a;font-family:monospace;">${comp.latency}</span>` : '';
                 return `
                     <div style="display:flex;align-items:center;gap:1rem;padding:0.85rem 1rem;border-radius:10px;background:${bg};border:1px solid ${border};">
                         <span style="font-size:1.3rem;">${meta.icon}</span>
                         <div style="flex:1;min-width:0;">
-                            <div style="font-weight:600;font-size:0.9rem;color:#e2e8f0;margin-bottom:0.2rem;">${meta.label}</div>
-                            <div style="font-size:0.8rem;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${comp.detail}</div>
+                            <div style="font-weight:600;font-size:0.9rem;color:#000;margin-bottom:0.2rem;">${meta.label}</div>
+                            <div style="font-size:0.8rem;color:#333;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${comp.detail}</div>
                         </div>
                         ${latency}
                         <span style="font-size:0.75rem;font-weight:700;color:${color};white-space:nowrap;padding:0.2rem 0.6rem;border-radius:99px;background:${bg};border:1px solid ${border};">${pill}</span>

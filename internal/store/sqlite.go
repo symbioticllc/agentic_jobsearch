@@ -90,6 +90,9 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 	db.Exec("ALTER TABLE jobs ADD COLUMN fit_brief TEXT")
 	db.Exec("ALTER TABLE jobs ADD COLUMN market_salary TEXT")
 	db.Exec("ALTER TABLE jobs ADD COLUMN score INTEGER DEFAULT 0")
+	db.Exec("ALTER TABLE jobs ADD COLUMN sub_score_tech INTEGER DEFAULT 0")
+	db.Exec("ALTER TABLE jobs ADD COLUMN sub_score_domain INTEGER DEFAULT 0")
+	db.Exec("ALTER TABLE jobs ADD COLUMN sub_score_senior INTEGER DEFAULT 0")
 	db.Exec("ALTER TABLE jobs ADD COLUMN cover_letter TEXT")
 	db.Exec("ALTER TABLE jobs ADD COLUMN tailoring_status TEXT DEFAULT 'pending'")
 
@@ -204,13 +207,13 @@ func (s *SQLiteStore) GetAllJobs(userID string) ([]scraper.Job, error) {
 
 // GetJobByID returns a single job by its ID
 func (s *SQLiteStore) GetJobByID(userID string, id string) (scraper.Job, error) {
-	row := s.db.QueryRow(`SELECT id, title, company, location, description, compensation, url, source, tags, remote, scraped_at, tailored_resume, tailored_report, fit_brief, market_salary, score, cover_letter, tailoring_status FROM jobs WHERE id = ? AND user_id = ?`, id, userID)
+	row := s.db.QueryRow(`SELECT id, title, company, location, description, compensation, url, source, tags, remote, scraped_at, tailored_resume, tailored_report, fit_brief, market_salary, score, sub_score_tech, sub_score_domain, sub_score_senior, cover_letter, tailoring_status FROM jobs WHERE id = ? AND user_id = ?`, id, userID)
 	var j scraper.Job
 	var tagsStr, scrapedAtStr string
 	var comp, location, source, tr, trep, fb, ms, cl, status sql.NullString
-	var remoteInt, score sql.NullInt64
+	var remoteInt, score, st, sd, sss sql.NullInt64
 
-	if err := row.Scan(&j.ID, &j.Title, &j.Company, &location, &j.Description, &comp, &j.URL, &source, &tagsStr, &remoteInt, &scrapedAtStr, &tr, &trep, &fb, &ms, &score, &cl, &status); err != nil {
+	if err := row.Scan(&j.ID, &j.Title, &j.Company, &location, &j.Description, &comp, &j.URL, &source, &tagsStr, &remoteInt, &scrapedAtStr, &tr, &trep, &fb, &ms, &score, &st, &sd, &sss, &cl, &status); err != nil {
 		return j, err
 	}
 
@@ -222,6 +225,9 @@ func (s *SQLiteStore) GetJobByID(userID string, id string) (scraper.Job, error) 
 	j.FitBrief = fb.String
 	j.MarketSalary = ms.String
 	j.Score = int(score.Int64)
+	j.SubScoreTech = int(st.Int64)
+	j.SubScoreDomain = int(sd.Int64)
+	j.SubScoreSenior = int(sss.Int64)
 	j.CoverLetter = cl.String
 	j.TailoringStatus = status.String
 	if tagsStr != "" {
@@ -238,7 +244,7 @@ func (s *SQLiteStore) SearchFTS(userID string, query string) ([]scraper.Job, err
 	escapedQuery := `"` + strings.ReplaceAll(query, `"`, `""`) + `"`
 
 	rows, err := s.db.Query(`
-		SELECT j.id, j.title, j.company, j.location, j.description, j.compensation, j.url, j.source, j.tags, j.remote, j.scraped_at, j.tailored_resume, j.tailored_report, j.fit_brief, j.market_salary, j.score, j.cover_letter, j.tailoring_status
+		SELECT j.id, j.title, j.company, j.location, j.description, j.compensation, j.url, j.source, j.tags, j.remote, j.scraped_at, j.tailored_resume, j.tailored_report, j.fit_brief, j.market_salary, j.score, j.sub_score_tech, j.sub_score_domain, j.sub_score_senior, j.cover_letter, j.tailoring_status
 		FROM jobs_fts f
 		JOIN jobs j ON f.rowid = j.rowid
 		WHERE jobs_fts MATCH ? AND j.user_id = ?
@@ -255,9 +261,9 @@ func (s *SQLiteStore) SearchFTS(userID string, query string) ([]scraper.Job, err
 		var j scraper.Job
 		var tagsStr, scrapedAtStr string
 		var comp, location, source, tr, trep, fb, ms, cl, status sql.NullString
-		var remoteInt, score sql.NullInt64
+		var remoteInt, score, st, sd, sss sql.NullInt64
 
-		if err := rows.Scan(&j.ID, &j.Title, &j.Company, &location, &j.Description, &comp, &j.URL, &source, &tagsStr, &remoteInt, &scrapedAtStr, &tr, &trep, &fb, &ms, &score, &cl, &status); err != nil {
+		if err := rows.Scan(&j.ID, &j.Title, &j.Company, &location, &j.Description, &comp, &j.URL, &source, &tagsStr, &remoteInt, &scrapedAtStr, &tr, &trep, &fb, &ms, &score, &st, &sd, &sss, &cl, &status); err != nil {
 			continue
 		}
 
@@ -268,6 +274,10 @@ func (s *SQLiteStore) SearchFTS(userID string, query string) ([]scraper.Job, err
 		j.TailoredReport = trep.String
 		j.FitBrief = fb.String
 		j.MarketSalary = ms.String
+		j.Score = int(score.Int64)
+		j.SubScoreTech = int(st.Int64)
+		j.SubScoreDomain = int(sd.Int64)
+		j.SubScoreSenior = int(sss.Int64)
 		j.CoverLetter = cl.String
 		j.TailoringStatus = status.String
 		if tagsStr != "" {
@@ -287,12 +297,12 @@ func (s *SQLiteStore) UpdateTailoringStatus(userID, id, status string) error {
 }
 
 // SaveTailoredResult permanently associates an LLM generated layout with a specific Tenant's Job
-func (s *SQLiteStore) SaveTailoredResult(userID string, id string, resume string, report string, brief string, salary string, score int, coverLetter string) error {
+func (s *SQLiteStore) SaveTailoredResult(userID string, id string, resume string, report string, brief string, salary string, score int, st int, sd int, ss int, coverLetter string) error {
 	_, err := s.db.Exec(`
 		UPDATE jobs
-		SET tailored_resume = ?, tailored_report = ?, fit_brief = ?, market_salary = ?, score = ?, cover_letter = ?, tailoring_status = 'completed'
+		SET tailored_resume = ?, tailored_report = ?, fit_brief = ?, market_salary = ?, score = ?, sub_score_tech = ?, sub_score_domain = ?, sub_score_senior = ?, cover_letter = ?, tailoring_status = 'completed', tags = CASE WHEN tags LIKE '%tailored%' THEN tags WHEN tags = '' OR tags IS NULL THEN 'tailored' ELSE tags || ',tailored' END
 		WHERE id = ? AND user_id = ?
-	`, resume, report, brief, salary, score, coverLetter, id, userID)
+	`, resume, report, brief, salary, score, st, sd, ss, coverLetter, id, userID)
 	return err
 }
 

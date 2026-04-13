@@ -37,6 +37,7 @@ func InitLLM() error {
 	localLLM, err = ollama.New(
 		ollama.WithServerURL(ollamaServerURL),
 		ollama.WithModel(localModelName),
+		ollama.WithRunnerNumCtx(16384),
 	)
 	if err != nil {
 		fmt.Printf("      ⚠️  Local model initialization failed: %v. Will failover to Cloud.\n", err)
@@ -75,6 +76,9 @@ func PreloadModels() {
 			payload := map[string]interface{}{
 				"model":      modelName,
 				"keep_alive": -1, // never auto-unload
+				"options": map[string]interface{}{
+					"num_ctx": 16384,
+				},
 			}
 			body, err := json.Marshal(payload)
 			if err != nil {
