@@ -16,11 +16,15 @@ import (
 )
 
 // localModel is the single local Ollama model used for all generation tiers.
-// gemma4:31b — 31B parameter multimodal model, confirmed loaded on this machine.
-// Switch to qwen3:30b-a3b once pulled: ollama pull qwen3:30b-a3b
-const localModelName = "gemma4:31b"
+// qwen3:30b-a3b — MoE architecture, ~3B active params per token.
+// Run: ollama pull qwen3:30b-a3b  (if not yet installed)
+const localModelName = "qwen3:30b-a3b"
 
 var localLLM llms.Model
+
+// ActiveModel returns the name of the currently configured local Ollama model.
+// Used by the health handler and startup logs to avoid hardcoding.
+func ActiveModel() string { return localModelName }
 
 // InitLLM sets up Ollama with a single local model (qwen3:30b-a3b) plus optional cloud failovers.
 func InitLLM() error {

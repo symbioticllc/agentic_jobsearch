@@ -18,17 +18,20 @@ document.addEventListener('DOMContentLoaded', () => {
     let reportData = [];
 
     // ── Startup Health Poller ─────────────────────────────────────────────────
-    // Polls /api/health immediately on page load. Shows a banner while core
-    // components are still initializing (Ollama loading qwen3 from NAS, etc.)
-    // and auto-dismisses once everything is green.
-    const banner      = document.getElementById('startup-banner');
-    const bannerMsg   = document.getElementById('startup-message');
-    const bannerDetail= document.getElementById('startup-detail');
-    const healthDot   = document.getElementById('health-dot');
-    let startupPoller = null;
-    let systemReady   = false;
+    const banner       = document.getElementById('startup-banner');
+    const bannerMsg    = document.getElementById('startup-message');
+    const bannerDetail = document.getElementById('startup-detail');
+    const healthDot    = document.getElementById('health-dot');
+    let startupPoller  = null;
+    let systemReady    = false;
 
+    function setBanner(display) { if (banner) banner.style.display = display; }
+    function setBannerMsg(text, color) {
+        if (bannerMsg) { bannerMsg.textContent = text; bannerMsg.style.color = color || ''; }
+    }
+    function setBannerDetail(text) { if (bannerDetail) bannerDetail.textContent = text; }
     function updateHealthDot(overall) {
+        if (!healthDot) return;
         const colors = { ok: '#10b981', degraded: '#f59e0b', error: '#ef4444' };
         healthDot.style.background = colors[overall] || '#f59e0b';
     }
@@ -40,44 +43,37 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await res.json();
             updateHealthDot(data.overall);
 
-            const ollama  = data.components?.ollama  || {};
-            const redis   = data.components?.redis   || {};
-            const sqlite  = data.components?.sqlite  || {};
+            const ollama = data.components?.ollama || {};
+            const redis  = data.components?.redis  || {};
+            const sqlite = data.components?.sqlite || {};
 
-            // Build a human-readable status line
             const issues = [];
-            if (ollama.status !== 'ok')  issues.push(ollama.status === 'error'    ? '🧠 Ollama unreachable' : '🧠 qwen3 loading into memory...');
+            if (ollama.status !== 'ok')    issues.push(ollama.status === 'error' ? '🧠 Ollama unreachable' : '🧠 Model loading from NAS...');
             if (redis.status  === 'error') issues.push('⚡ Redis offline');
             if (sqlite.status === 'error') issues.push('🗄️ SQLite error');
 
             if (issues.length === 0 && data.overall === 'ok') {
-                // Everything ready — flash green and hide banner
-                bannerMsg.textContent = '✅ All systems ready';
-                bannerMsg.style.color = '#10b981';
-                bannerDetail.textContent = '';
-                banner.style.display = 'flex';
+                setBannerMsg('✅ All systems ready', '#10b981');
+                setBannerDetail('');
+                setBanner('flex');
                 if (startupPoller) clearInterval(startupPoller);
                 systemReady = true;
-                setTimeout(() => { banner.style.display = 'none'; }, 2500);
+                setTimeout(() => setBanner('none'), 2500);
             } else {
-                banner.style.display = 'flex';
-                bannerMsg.style.color = '';
-                bannerMsg.textContent = issues.length ? issues.join('  ·  ') : 'Warming up...';
-                // Show latency if available
-                bannerDetail.textContent = ollama.latency ? `Ollama ${ollama.latency}` : '';
+                setBanner('flex');
+                setBannerMsg(issues.length ? issues.join('  ·  ') : 'Warming up...');
+                setBannerDetail(ollama.latency ? `Ollama ${ollama.latency}` : '');
             }
         } catch(e) {
-            // Server not yet reachable — keep polling silently
-            banner.style.display = 'flex';
-            bannerMsg.style.color = '';
-            bannerMsg.textContent = '⏳ Waiting for server...';
-            bannerDetail.textContent = '';
-            healthDot.style.background = '#ef4444';
+            setBanner('flex');
+            setBannerMsg('⏳ Waiting for server...');
+            setBannerDetail('');
+            if (healthDot) healthDot.style.background = '#ef4444';
         }
     }
 
-    // Start polling immediately — every 4 seconds until ready
-    banner.style.display = 'flex';
+    // Start polling — every 4s until all systems ready
+    setBanner('flex');
     pollStartupHealth();
     startupPoller = setInterval(async () => {
         if (!systemReady) await pollStartupHealth();

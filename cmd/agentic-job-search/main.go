@@ -554,12 +554,14 @@ func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		}
 		json.NewDecoder(resp.Body).Decode(&tags)
 
+		activeModel := llm.ActiveModel()
+
 		// Check if our target model is installed
 		modelInstalled := false
 		var installedNames []string
 		for _, m := range tags.Models {
 			installedNames = append(installedNames, m.Name)
-			if strings.HasPrefix(m.Name, "qwen3:30b-a3b") {
+			if strings.HasPrefix(m.Name, activeModel) {
 				modelInstalled = true
 			}
 		}
@@ -567,13 +569,13 @@ func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
 			allOk = false
 			components["ollama"] = ComponentStatus{
 				Status:  "degraded",
-				Detail:  fmt.Sprintf("qwen3:30b-a3b not found. Installed: %s", strings.Join(installedNames, ", ")),
+				Detail:  fmt.Sprintf("%s not found. Installed: %s", activeModel, strings.Join(installedNames, ", ")),
 				Latency: fmt.Sprintf("%dms", latency),
 			}
 			return
 		}
 
-		// Check if qwen3 is currently loaded (running) via /api/ps
+		// Check if model is currently loaded in memory via /api/ps
 		loaded := false
 		psResp, psErr := http.Get("http://127.0.0.1:11434/api/ps")
 		if psErr == nil {
@@ -585,19 +587,19 @@ func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
 			}
 			json.NewDecoder(psResp.Body).Decode(&ps)
 			for _, m := range ps.Models {
-				if strings.HasPrefix(m.Name, "qwen3:30b-a3b") {
+				if strings.HasPrefix(m.Name, activeModel) {
 					loaded = true
 				}
 			}
 		}
 
 		status := "ok"
-		detail := "qwen3:30b-a3b installed"
+		detail := activeModel + " installed"
 		if loaded {
-			detail = "qwen3:30b-a3b ✓ loaded in memory"
+			detail = activeModel + " ✓ loaded in memory"
 		} else {
 			status = "degraded"
-			detail = "qwen3:30b-a3b installed but not yet loaded (preload in progress)"
+			detail = activeModel + " installed but not yet loaded (preload in progress)"
 		}
 		components["ollama"] = ComponentStatus{Status: status, Detail: detail, Latency: fmt.Sprintf("%dms", latency)}
 	}()
