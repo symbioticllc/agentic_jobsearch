@@ -24,3 +24,6 @@ queued_resume/
 agentic-job-search
 *.exe
 *.test
+
+# BMAD
+_bmad/
