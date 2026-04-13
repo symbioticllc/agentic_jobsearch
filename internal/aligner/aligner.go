@@ -93,7 +93,12 @@ You may reword BULLET POINT DESCRIPTIONS to emphasize relevant skills, but the c
 
 ### Output Requirements
 1. **SCORE**: Provide a holistic job fit score from 0-100 based on the candidate's overall experience matching the JD. CRITICAL: The candidate requires ~$400k total comp. If the job explicitly posts compensation significantly lower (e.g. < $300k), penalize the score heavily. If compensation is "Not provided", you MUST use your own tech industry market data to silently estimate the compensation based on the Title, Company, and Seniority role. If your internal market estimate falls significantly below $300k, you must penalize the score heavily.
-2. **SUB-SCORES**: Break down the fit into 3 sub-categories, providing a 0-100 score for exactly these three dimensions: "Technical", "Domain", and "Seniority".
+2. **SUB-SCORES**: Break down the fit into 5 sub-categories, providing a 0-100 score for exactly these five dimensions:
+   - "Technical": Core stack alignment.
+   - "Domain": Industry/Sector knowledge mapping.
+   - "Seniority": Role leadership leveling.
+   - "Location": Compare the candidate's home location (found in their Base Resume — typically Richmond, VA metro area) against the job's posted location. Score 90-100 if the role is fully remote or in the candidate's metro area. Score 60-80 if hybrid with reasonable commute or partial remote. Score 20-50 if full relocation to another city is required. Score 0-20 if relocation to a high cost-of-living area with no remote option.
+   - "Lateral Shift": Measure how closely the proposed JD aligns to what the candidate CURRENTLY does in their most recent role. Read the candidate's current position responsibilities from the Base Resume and compare them to the JD's required duties. Score 80-100 if the JD is a natural continuation of their existing work (same domain, same tech, same type of deliverables). Score 50-70 if there is moderate overlap but some new functional areas. Score 20-40 if significant retooling or a career pivot is required. Score 0-20 if the role is in a completely different functional area.
 3. **MARKET_SALARY**: Based strictly on the job title, company, and typical tech industry market rates for this seniority, output a realistic estimated compensation range (e.g. "$250k - $320k").
 4. **BRIEF**: Provide a 1-2 sentence explanation of WHY the candidate is a good fit, or explicitly mention if the compensation might be a mismatch.
 5. **RESUME**: Provide the full tailored resume in Markdown. CRITICAL RULES:
@@ -134,6 +139,8 @@ SUB_SCORES:
 Technical: [score]
 Domain: [score]
 Seniority: [score]
+Location: [score]
+Lateral Shift: [score]
 MARKET_SALARY: [est salary range]
 BRIEF: [brief]
 RESUME: 

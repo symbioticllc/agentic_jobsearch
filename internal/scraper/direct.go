@@ -367,6 +367,16 @@ func (d *DirectScraper) fallbackDDGLLM(ctx context.Context, company string, quer
 
 	log.Printf("🤖 Agent found likely career URL for %s: %s . Analyzing with LLM by executing Headless DOM render...", company, careerURL)
 
+	// Workday explicit bypass
+	if strings.Contains(careerURL, ".myworkdayjobs.com") {
+		log.Printf("🤖 Enterprise Workday ATS Detected via DDG. Hijacking URL for native REST ingestion...")
+		wdJobs, ok := d.scrapeWorkday(careerURL, company, query)
+		if ok && len(wdJobs) > 0 {
+			return wdJobs, true
+		}
+		log.Printf("⚠️ Native Workday ATS ingestion failed. Falling back to Headless injection...")
+	}
+
 	// Fetch the actual career page using Headless Chrome Injection
 	chromCtx, cancelTab := chromedp.NewContext(d.allocatorCtx)
 	defer cancelTab()
@@ -413,4 +423,91 @@ func (d *DirectScraper) fallbackDDGLLM(ctx context.Context, company string, quer
 		return jobs, true
 	}
 	return nil, false
+}
+
+type workdayResponse struct {
+	JobPostings []struct {
+		Title          string `json:"title"`
+		ExternalPath   string `json:"externalPath"`
+		LocationsText  string `json:"locationsText"`
+		PostingDate    string `json:"postedOn"`
+		SearchScore    int    `json:"searchScore"`
+		TimeType       string `json:"timeType"`
+		ReqID          string `json:"bulletFields"` // Sometimes maps to the req
+	} `json:"jobPostings"`
+}
+
+func (d *DirectScraper) scrapeWorkday(careerURL, realCompanyName string, query SearchQuery) ([]Job, bool) {
+	// Parse: https://{tenant}.{node}.myworkdayjobs.com/{portal}
+	reWD := regexp.MustCompile(`https://([^.]+)\.([^.]+)\.myworkdayjobs\.com/([^/?#]+)`)
+	matches := reWD.FindStringSubmatch(careerURL)
+	if len(matches) < 4 {
+		return nil, false
+	}
+	tenant := matches[1]
+	wdNode := matches[2]
+	portal := matches[3]
+
+	apiURL := fmt.Sprintf("https://%s.%s.myworkdayjobs.com/wday/cxs/%s/%s/jobs", tenant, wdNode, tenant, portal)
+	baseJobURL := fmt.Sprintf("https://%s.%s.myworkdayjobs.com/%s", tenant, wdNode, portal)
+
+	// Use each keyword as a Workday searchText query for better relevance
+	searchTerms := query.Keywords
+	if len(searchTerms) == 0 {
+		searchTerms = []string{""}
+	}
+
+	seen := make(map[string]struct{})
+	var out []Job
+
+	for _, term := range searchTerms {
+		payload := fmt.Sprintf(`{"appliedFacets":{},"limit":50,"offset":0,"searchText":"%s"}`, term)
+		req, _ := http.NewRequest("POST", apiURL, strings.NewReader(payload))
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+
+		resp, err := d.client.Do(req)
+		if err != nil || resp.StatusCode != 200 {
+			if resp != nil {
+				resp.Body.Close()
+			}
+			continue
+		}
+
+		var res workdayResponse
+		if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+			resp.Body.Close()
+			continue
+		}
+		resp.Body.Close()
+
+		log.Printf("🔍 Workday [%s] keyword=%q -> %d results", realCompanyName, term, len(res.JobPostings))
+
+		for _, j := range res.JobPostings {
+			if _, ok := seen[j.ExternalPath]; ok {
+				continue
+			}
+			seen[j.ExternalPath] = struct{}{}
+
+			jobURL := baseJobURL + j.ExternalPath
+			locLower := strings.ToLower(j.LocationsText)
+			idSlugs := strings.Split(j.ExternalPath, "/")
+
+			out = append(out, Job{
+				ID:           "wday-" + idSlugs[len(idSlugs)-1],
+				Title:        j.Title,
+				Company:      realCompanyName,
+				Location:     j.LocationsText,
+				Description:  fmt.Sprintf("[Workday %s] %s - %s. Visit the link above for the full description.", realCompanyName, j.Title, j.LocationsText),
+				Compensation: "",
+				URL:          jobURL,
+				Source:       "workday",
+				Remote:       strings.Contains(locLower, "remote"),
+				ScrapedAt:    time.Now(),
+			})
+		}
+	}
+	log.Printf("✅ Workday [%s] Complete! %d unique listings.", realCompanyName, len(out))
+	return out, len(out) > 0
 }

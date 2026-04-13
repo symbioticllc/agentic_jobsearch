@@ -111,6 +111,7 @@ func main() {
 	mux.HandleFunc("POST /api/scrape", authMiddleware(srv.handleScrapeJobs))
 	mux.HandleFunc("POST /api/scrape/stop", authMiddleware(srv.handleStopScrape))
 	mux.HandleFunc("POST /api/jobs/tailor/{id}", authMiddleware(srv.handleTailorJob))
+	mux.HandleFunc("POST /api/jobs/apply/{id}", authMiddleware(srv.handleSetApplied))
 	mux.HandleFunc("GET /api/jobs/status/{id}", authMiddleware(srv.handleGetTailorStatus))
 	mux.HandleFunc("POST /api/export/gdocs/{id}", authMiddleware(srv.handleGoogleDocsExport))
 	mux.HandleFunc("GET /api/jobs/search", authMiddleware(srv.handleSearchJobs))
@@ -338,10 +339,29 @@ func (s *server) handleScrapeJobs(w http.ResponseWriter, r *http.Request) {
 
 	targetCompanies := loadTargetCompanies("./target_companies")
 
-	keywords := []string{"golang", "go", "backend", "architect", "staff", "principal"}
+	keywords := []string{
+		"golang", "go", "backend", "architect", "staff", "principal",
+		"distinguished engineer", "senior engineer", "software engineering",
+		"director of engineering", "director of software", "engineering manager",
+		"head of engineering", "platform engineer", "infrastructure",
+		"vp engineering", "vp software", "director", "senior director",
+	}
 	if r.URL.Query().Get("exec") == "true" {
-		keywords = append(keywords, "director", "head of", "vp", "vice president", "chief", "cto", "cxo", "ciso", "cio")
+		keywords = append(keywords, "cto", "cio", "ciso", "cxo", "chief technology",
+			"chief information", "chief architect", "vice president", "svp",
+			"head of", "managing director", "executive", "fellow")
 		fmt.Println("🚀 Executive Scrape Mode Enabled: Casting broader net for leadership roles.")
+	}
+
+	// Merge user-supplied custom keywords
+	if custom := r.URL.Query().Get("keywords"); custom != "" {
+		for _, kw := range strings.Split(custom, ",") {
+			kw = strings.TrimSpace(kw)
+			if kw != "" {
+				keywords = append(keywords, kw)
+			}
+		}
+		fmt.Printf("🎯 Custom keywords added: %s\n", custom)
 	}
 
 	query := scraper.SearchQuery{
@@ -455,7 +475,7 @@ func (s *server) handleTailorJob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if err := s.db.SaveTailoredResult(userID, job.ID, result.TailoredResume, result.Report, result.FitBrief, result.MarketSalary, result.Score, result.SubScores["Technical"], result.SubScores["Domain"], result.SubScores["Seniority"], result.CoverLetter); err != nil {
+		if err := s.db.SaveTailoredResult(userID, job.ID, result.TailoredResume, result.Report, result.FitBrief, result.MarketSalary, result.Score, result.SubScores["Technical"], result.SubScores["Domain"], result.SubScores["Seniority"], result.SubScores["Location"], result.SubScores["Lateral"], result.CoverLetter); err != nil {
 			log.Printf("⚠️ Failed to persist tailoring data: %v\n", err)
 			s.db.UpdateTailoringStatus(userID, id, "failed")
 		}
@@ -464,7 +484,34 @@ func (s *server) handleTailorJob(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(map[string]string{"status": "processing", "job_id": id})
+	json.NewEncoder(w).Encode(map[string]string{"status": "processing", "message": "Tailoring job queued locally", "id": id})
+}
+
+// POST /api/jobs/apply/{id}
+func (s *server) handleSetApplied(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "missing job id", http.StatusBadRequest)
+		return
+	}
+
+	userID := r.Context().Value("user_id").(string)
+	
+	var req struct {
+		Applied bool `json:"applied"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON payload", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.db.UpdateAppliedStatus(userID, id, req.Applied); err != nil {
+		http.Error(w, "Failed to update applied status", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{"status": "success", "applied": req.Applied})
 }
 
 // GET /api/jobs/status/{id}

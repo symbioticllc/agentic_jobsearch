@@ -242,6 +242,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const stopScrapeBtn = document.getElementById('stop-scrape-btn');
 
+    document.getElementById('tailored-only-toggle').addEventListener('change', () => {
+        renderJobList();
+        if (activeJobId) {
+            selectJob(activeJobId);
+        }
+    });
+
     // Event Listeners
     stopScrapeBtn.addEventListener('click', async () => {
         try {
@@ -259,39 +266,54 @@ document.addEventListener('DOMContentLoaded', () => {
         stopScrapeBtn.innerHTML = '<span class="icon">🛑</span> Stop';
         stopScrapeBtn.disabled = false;
         
-        const isExecParams = execToggle.checked ? '?exec=true' : '';
-        
+        const params = new URLSearchParams();
+        if (execToggle.checked) params.set('exec', 'true');
+        const kwInput = document.getElementById('custom-keywords-input');
+        if (kwInput && kwInput.value.trim()) params.set('keywords', kwInput.value.trim());
+        const qStr = params.toString() ? '?' + params.toString() : '';
+
+        const statusBar = document.getElementById('scrape-status-bar');
+        const statusText = document.getElementById('scrape-status-text');
+        statusBar.style.display = 'block';
+        statusText.textContent = 'Initializing Scraper...';
+
         let dots = 0;
         const progressTexts = ["Initializing Scraper", "Contacting Job Boards", "Parsing Raw Data", "Filtering Irrelevant", "Saving Opportunities", "Finalizing"];
         let step = 0;
         const progressInterval = setInterval(() => {
             dots = (dots + 1) % 4;
             const ds = ".".repeat(dots);
-            scrapeBtn.innerHTML = `<span class="icon">⏳</span> ${progressTexts[step] || "Working"}${ds}`;
+            statusText.textContent = `${progressTexts[step] || "Working"}${ds}`;
             if (dots === 3 && step < progressTexts.length - 1) step++;
         }, 800);
 
         try {
-            const res = await fetch('/api/scrape' + isExecParams, { method: 'POST' });
+            const res = await fetch('/api/scrape' + qStr, { method: 'POST' });
             clearInterval(progressInterval);
             if(res.ok) {
                 const data = await res.json();
-                alert(`Scraping complete! Added ${data.added} new jobs from ${data.scraped} found.`);
-                scrapeBtn.innerHTML = '<span class="icon">⏳</span> Refreshing dashboard...';
+                statusText.textContent = `✅ Done! Added ${data.added} new jobs from ${data.scraped} found.`;
+                statusBar.style.borderColor = 'rgba(16,185,129,0.3)';
+                statusBar.style.background = 'rgba(16,185,129,0.08)';
+                statusText.style.color = '#10b981';
+                setTimeout(() => { statusBar.style.display = 'none'; statusBar.style.borderColor = ''; statusBar.style.background = ''; statusText.style.color = ''; }, 5000);
                 fetchJobs();
             } else if (res.status === 408 || res.status === 409 || res.status === 499 || String(res.status).startsWith("4")) {
                 const errText = await res.text();
-                alert(`Scraping aborted: ${errText.trim()}`);
+                statusText.textContent = `⚠️ Aborted: ${errText.trim()}`;
+                statusBar.style.borderColor = 'rgba(245,158,11,0.3)';
+                setTimeout(() => { statusBar.style.display = 'none'; statusBar.style.borderColor = ''; }, 4000);
             } else {
-                alert('Scraping failed or timed out.');
+                statusText.textContent = '❌ Scraping failed or timed out.';
+                setTimeout(() => { statusBar.style.display = 'none'; }, 4000);
             }
         } catch (e) {
             console.error(e);
             clearInterval(progressInterval);
-            alert('Scraping connection dropped explicitly.');
+            statusText.textContent = '❌ Connection dropped.';
+            setTimeout(() => { statusBar.style.display = 'none'; }, 4000);
         } finally {
             clearInterval(progressInterval);
-            scrapeBtn.innerHTML = '<span class="icon">🔍</span> Scrape New Jobs';
             scrapeBtn.disabled = false;
             stopScrapeBtn.style.display = 'none';
         }
@@ -446,6 +468,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (actualMax < minCompValue) return; // filter this job out
             }
 
+            if (document.getElementById('tailored-only-toggle').checked) {
+                if (!job.tailored_resume || job.tailored_resume.length === 0) return;
+            }
+
             displayedCount++;
             const card = document.createElement('div');
             card.className = `job-card ${activeJobId === job.id ? 'active' : ''}`;
@@ -476,6 +502,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 const confidence = Math.max(0, 100 - (job.vector_distance * 75)).toFixed(1);
                 matchHtml = `<div style="color: #c084fc; font-weight: 700; font-size: 0.85rem; margin-top: 0.5rem; display: flex; align-items: center; gap: 0.25rem;">
                     <span>⚡ Semantic Match: ${confidence}%</span>
+                </div>`;
+            }
+
+            if (job.applied) {
+                matchHtml += `<div style="color: #10b981; font-weight: 800; font-size: 0.85rem; margin-top: 0.5rem; display: flex; align-items: center; gap: 0.25rem;">
+                    <span>✅ Formal Application Submitted</span>
                 </div>`;
             }
 
@@ -518,33 +550,36 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderJobDetail(job) {
         jobDetailEl.innerHTML = `
             <div class="detail-view">
-                <h1>${job.title}</h1>
-                <div class="company-info">
+                <h1 style="font-size: 1.35rem; font-weight: 700; letter-spacing: -0.02em;">${job.title}</h1>
+                <div class="company-info" style="margin-bottom: 1rem;">
                     <strong>${job.company}</strong> &bull; 
                     <a href="${job.url}" target="_blank">View Original Post ↗</a>
+                    ${job.location ? ` &bull; <span style="color: var(--text-muted);">${job.location}</span>` : ''}
                 </div>
-                ${job.compensation ? `<div class="job-compensation" style="color: #10b981; font-weight: 700; font-size: 1.1rem; margin-bottom: 1.5rem;">💰 Compensation: ${job.compensation}</div>` : ''}
+                ${job.compensation ? `<div style="color: #10b981; font-weight: 600; font-size: 0.95rem; margin-bottom: 1rem;">💰 ${job.compensation}</div>` : ''}
 
-                <div class="action-bar" style="display:flex; justify-content:space-between; align-items:center;">
-                    <div style="display:flex; gap:1rem; align-items:center;">
-                        <button class="primary-btn" id="run-tailor-btn">
-                            <span class="icon">✨</span> Align & Tailor Resume
-                        </button>
-                        ${availableResumes.length > 1 ? `
-                            <select id="resume-template-select" style="background: rgba(255,255,255,0.05); color: white; border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; padding: 0.5rem;">
-                                ${availableResumes.map(r => `<option style="color: #333;" value="${r}">${r}</option>`).join('')}
-                            </select>
-                        ` : ''}
-                        <button class="secondary-btn" id="open-export-modal-btn" style="display:none; color: #fff; border-color: rgba(255,255,255,0.3);">
-                            <span class="icon">📄</span> View & Export
-                        </button>
+                <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; padding-bottom: 1rem; border-bottom: 1px solid rgba(255,255,255,0.06); margin-bottom: 1rem;">
+                    <button class="primary-btn" id="run-tailor-btn" style="font-size: 0.82rem; padding: 0.45rem 1rem;">
+                        <span class="icon">✨</span> Align & Tailor Resume
+                    </button>
+                    ${availableResumes.length > 1 ? `
+                        <select id="resume-template-select" style="background: rgba(255,255,255,0.05); color: white; border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; padding: 0.4rem 0.5rem; font-size: 0.8rem;">
+                            ${availableResumes.map(r => `<option style="color: #333;" value="${r}">${r}</option>`).join('')}
+                        </select>
+                    ` : ''}
+                    <button class="secondary-btn" id="open-export-modal-btn" style="display:none; color: #fff; border-color: rgba(255,255,255,0.2); font-size: 0.82rem; padding: 0.45rem 0.85rem;">
+                        <span class="icon">📄</span> Export
+                    </button>
+                    <button class="secondary-btn" id="toggle-applied-btn" style="border-color: ${job.applied ? 'rgba(16,185,129,0.25)' : 'rgba(255,255,255,0.15)'}; color: ${job.applied ? '#10b981' : 'var(--text-muted)'}; font-size: 0.82rem; padding: 0.45rem 0.85rem;">
+                        <span class="icon">${job.applied ? '✅' : '☑️'}</span> ${job.applied ? 'Applied' : 'Mark Applied'}
+                    </button>
+                    <div id="retailor-instructions-container" style="display:none; flex: 1; min-width: 200px;">
+                        <input type="text" id="retailor-instructions-input" placeholder="Re-tailor feedback (e.g. 'Emphasize cloud')" style="width: 100%; padding: 0.4rem 0.65rem; border-radius: 6px; border: 1px solid rgba(255,255,255,0.15); background: rgba(0,0,0,0.2); color: #fff; font-size: 0.8rem;" />
                     </div>
-                    <div id="retailor-instructions-container" style="display:none; flex: 1; max-width: 300px; margin-left: 1rem;">
-                        <input type="text" id="retailor-instructions-input" placeholder="Feedback (e.g. 'Emphasize cloud deployments')" style="width: 100%; padding: 0.5rem 0.75rem; border-radius: 6px; border: 1px solid rgba(255,255,255,0.2); background: rgba(0,0,0,0.2); color: #fff; font-size: 0.85rem;" />
-                    </div>
-                    <div class="tailor-status" id="tailor-status-area">
-                        <span>Has not been tailored yet.</span>
-                    </div>
+                </div>
+
+                <div id="tailor-status-area" style="margin-bottom: 1rem;">
+                    <span style="color: var(--text-muted); font-size: 0.85rem;">Not yet tailored.</span>
                 </div>
 
                 <div id="tailored-output"></div>
@@ -552,7 +587,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div id="tailor-polling-overlay" style="display:none; padding: 2rem; background: rgba(0,0,0,0.2); border-radius: 12px; border: 1px dashed rgba(255,255,255,0.1); text-align: center; margin-bottom: 2rem;">
                     <div class="loader" style="width: 40px; height: 40px; border: 4px solid rgba(255,255,255,0.1); border-top: 4px solid #60a5fa; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 1rem;"></div>
                     <div style="font-weight: 600; color: #60a5fa; margin-bottom: 0.5rem;">Thinking...</div>
-                    <div style="font-size: 0.85rem; color: var(--text-muted);">Qwen3 30B-A3B (MoE) is aligning your project history to this role.<br/>This usually takes 20-30 seconds.</div>
+                    <div style="font-size: 0.82rem; color: var(--text-muted);">Aligning your project history to this role. ~20-30s.</div>
                 </div>
 
                 <h3>Original Description</h3>
@@ -562,6 +597,25 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
 
         document.getElementById('run-tailor-btn').addEventListener('click', () => runTailor(job.id));
+
+        document.getElementById('toggle-applied-btn').addEventListener('click', async () => {
+            const btn = document.getElementById('toggle-applied-btn');
+            btn.disabled = true;
+            const newStatus = !job.applied;
+            try {
+                await fetch(`/api/jobs/apply/${job.id}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ applied: newStatus })
+                });
+                job.applied = newStatus;
+                selectJob(job.id); 
+                renderJobList();
+            } catch(e) {
+                console.error("Failed to mark applied", e);
+                btn.disabled = false;
+            }
+        });
 
         // If the backend already cached the generation in the DB, prefill the exact layout instantly
         if (job.tailored_resume && job.tailored_resume.length > 0) {
@@ -593,30 +647,23 @@ document.addEventListener('DOMContentLoaded', () => {
             const ss = cachedResult.SubScores?.Seniority || 0;
 
             statusArea.innerHTML = `
-                <div style="display: flex; gap: 1.5rem; align-items: center; align-content: center; flex-wrap: wrap;">
-                    <div class="score-hud" style="text-align: center;">
-                        <span class="val" style="font-size: 2.5rem; font-weight: 800; color: #10b981; display: block; line-height: 1;">${(cachedResult.Score || job.score || 0)}%</span>
-                        <span class="label" style="font-size: 0.8rem; font-weight: 600; text-transform: uppercase; color: var(--text-muted); letter-spacing: 1px;">Holistic Fit</span>
-                    </div>
-                    
-                    <div style="display: flex; flex-direction: column; gap: 0.5rem; border-left: 2px solid rgba(255,255,255,0.1); padding-left: 1.5rem;">
-                        <div style="display: flex; justify-content: space-between; gap: 1rem; font-size: 0.85rem;">
-                            <span style="color: var(--text-muted);">Technical</span>
-                            <strong style="color: #60a5fa;">${ts}%</strong>
-                        </div>
-                        <div style="display: flex; justify-content: space-between; gap: 1rem; font-size: 0.85rem;">
-                            <span style="color: var(--text-muted);">Domain</span>
-                            <strong style="color: #60a5fa;">${ds}%</strong>
-                        </div>
-                        <div style="display: flex; justify-content: space-between; gap: 1rem; font-size: 0.85rem;">
-                            <span style="color: var(--text-muted);">Seniority</span>
-                            <strong style="color: #60a5fa;">${ss}%</strong>
-                        </div>
+                <div style="display: grid; grid-template-columns: auto 1fr auto; gap: 1.5rem; align-items: center; padding: 1rem 1.25rem; border-radius: 10px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);">
+                    <div style="text-align: center; padding-right: 0.5rem;">
+                        <span style="font-size: 2rem; font-weight: 800; color: #10b981; display: block; line-height: 1;">${(cachedResult.Score || job.score || 0)}%</span>
+                        <span style="font-size: 0.7rem; font-weight: 600; text-transform: uppercase; color: var(--text-muted); letter-spacing: 1px;">Fit Score</span>
                     </div>
 
-                    <div style="display: flex; flex-direction: column; gap: 0.25rem; border-left: 2px solid rgba(255,255,255,0.1); padding-left: 1.5rem;">
-                        <span style="font-size: 0.8rem; font-weight: 600; text-transform: uppercase; color: var(--text-muted); letter-spacing: 1px;">Estimated Market Value</span>
-                        <strong style="color: #c084fc; font-size: 1.1rem;">${cachedResult.MarketSalary || "Unknown"}</strong>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.3rem 1.5rem; border-left: 1px solid rgba(255,255,255,0.08); padding-left: 1.25rem; font-size: 0.82rem;">
+                        <div style="display: flex; justify-content: space-between;"><span style="color: var(--text-muted);">Technical</span><strong style="color: #60a5fa;">${ts}%</strong></div>
+                        <div style="display: flex; justify-content: space-between;"><span style="color: var(--text-muted);">Location</span><strong style="color: #60a5fa;">${cachedResult.SubScores?.Location || job.sub_score_location || 0}%</strong></div>
+                        <div style="display: flex; justify-content: space-between;"><span style="color: var(--text-muted);">Domain</span><strong style="color: #60a5fa;">${ds}%</strong></div>
+                        <div style="display: flex; justify-content: space-between;"><span style="color: var(--text-muted);">Lateral Fit</span><strong style="color: #60a5fa;">${cachedResult.SubScores?.Lateral || job.sub_score_lateral || 0}%</strong></div>
+                        <div style="display: flex; justify-content: space-between;"><span style="color: var(--text-muted);">Seniority</span><strong style="color: #60a5fa;">${ss}%</strong></div>
+                    </div>
+
+                    <div style="text-align: right; border-left: 1px solid rgba(255,255,255,0.08); padding-left: 1.25rem;">
+                        <span style="font-size: 0.7rem; font-weight: 600; text-transform: uppercase; color: var(--text-muted); letter-spacing: 1px; display: block;">Market Value</span>
+                        <strong style="color: #c084fc; font-size: 1rem;">${cachedResult.MarketSalary || "Unknown"}</strong>
                     </div>
                 </div>
             `;
@@ -733,8 +780,12 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const res = await fetch(`/api/jobs/tailor/${id}${templateQuery}`, { method: 'POST' });
             if(res.status === 202) {
-                // Accepted for background processing
+                // Accepted for background processing — clear any stale cached output
+                outputArea.innerHTML = '';
+                statusArea.innerHTML = '<span style="color: var(--text-muted);">Re-tailoring in progress...</span>';
                 document.getElementById('tailor-polling-overlay').style.display = 'block';
+                const exportBtn = document.getElementById('open-export-modal-btn');
+                if (exportBtn) exportBtn.style.display = 'none';
                 const jobIndex = jobsData.findIndex(j => j.id === id);
                 if(jobIndex !== -1) jobsData[jobIndex].tailoring_status = 'processing';
                 startPolling(id);
@@ -755,30 +806,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // Format output into the UI
             statusArea.innerHTML = `
-                <div style="display: flex; gap: 1.5rem; align-items: center; align-content: center; flex-wrap: wrap;">
-                    <div class="score-hud" style="text-align: center;">
-                        <span class="val" style="font-size: 2.5rem; font-weight: 800; color: #10b981; display: block; line-height: 1;">${result.Score}%</span>
-                        <span class="label" style="font-size: 0.8rem; font-weight: 600; text-transform: uppercase; color: var(--text-muted); letter-spacing: 1px;">Holistic Fit</span>
+                <div style="display: grid; grid-template-columns: auto 1fr auto; gap: 1.5rem; align-items: center; padding: 1rem 1.25rem; border-radius: 10px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);">
+                    <div style="text-align: center; padding-right: 0.5rem;">
+                        <span style="font-size: 2rem; font-weight: 800; color: #10b981; display: block; line-height: 1;">${result.Score}%</span>
+                        <span style="font-size: 0.7rem; font-weight: 600; text-transform: uppercase; color: var(--text-muted); letter-spacing: 1px;">Fit Score</span>
                     </div>
-                    
-                    <div style="display: flex; flex-direction: column; gap: 0.5rem; border-left: 2px solid rgba(255,255,255,0.1); padding-left: 1.5rem;">
-                        <div style="display: flex; justify-content: space-between; gap: 1rem; font-size: 0.85rem;">
-                            <span style="color: var(--text-muted);">Technical</span>
-                            <strong style="color: #60a5fa;">${ts}%</strong>
-                        </div>
-                        <div style="display: flex; justify-content: space-between; gap: 1rem; font-size: 0.85rem;">
-                            <span style="color: var(--text-muted);">Domain</span>
-                            <strong style="color: #60a5fa;">${ds}%</strong>
-                        </div>
-                        <div style="display: flex; justify-content: space-between; gap: 1rem; font-size: 0.85rem;">
-                            <span style="color: var(--text-muted);">Seniority</span>
-                            <strong style="color: #60a5fa;">${ss}%</strong>
-                        </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.3rem 1.5rem; border-left: 1px solid rgba(255,255,255,0.08); padding-left: 1.25rem; font-size: 0.82rem;">
+                        <div style="display: flex; justify-content: space-between;"><span style="color: var(--text-muted);">Technical</span><strong style="color: #60a5fa;">${ts}%</strong></div>
+                        <div style="display: flex; justify-content: space-between;"><span style="color: var(--text-muted);">Location</span><strong style="color: #60a5fa;">${result.SubScores?.Location || 0}%</strong></div>
+                        <div style="display: flex; justify-content: space-between;"><span style="color: var(--text-muted);">Domain</span><strong style="color: #60a5fa;">${ds}%</strong></div>
+                        <div style="display: flex; justify-content: space-between;"><span style="color: var(--text-muted);">Lateral Fit</span><strong style="color: #60a5fa;">${result.SubScores?.["Lateral Shift"] || 0}%</strong></div>
+                        <div style="display: flex; justify-content: space-between;"><span style="color: var(--text-muted);">Seniority</span><strong style="color: #60a5fa;">${ss}%</strong></div>
                     </div>
-
-                    <div style="display: flex; flex-direction: column; gap: 0.25rem; border-left: 2px solid rgba(255,255,255,0.1); padding-left: 1.5rem;">
-                        <span style="font-size: 0.8rem; font-weight: 600; text-transform: uppercase; color: var(--text-muted); letter-spacing: 1px;">Estimated Market Value</span>
-                        <strong style="color: #c084fc; font-size: 1.1rem;">${result.MarketSalary || "Unknown"}</strong>
+                    <div style="text-align: right; border-left: 1px solid rgba(255,255,255,0.08); padding-left: 1.25rem;">
+                        <span style="font-size: 0.7rem; font-weight: 600; text-transform: uppercase; color: var(--text-muted); letter-spacing: 1px; display: block;">Market Value</span>
+                        <strong style="color: #c084fc; font-size: 1rem;">${result.MarketSalary || "Unknown"}</strong>
                     </div>
                 </div>
             `;
@@ -1001,7 +1043,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const totalJobs = reportData.reduce((s, r) => s + r.total_jobs, 0);
             const totalTailored = reportData.reduce((s, r) => s + r.tailored_count, 0);
-            badge.textContent = `${reportData.length} companies · ${totalJobs} jobs · ${totalTailored} tailored`;
+            const totalApplied = reportData.reduce((s, r) => s + (r.applied_count || 0), 0);
+            badge.textContent = `${reportData.length} companies · ${totalJobs} jobs · ${totalTailored} tailored · ${totalApplied} applied`;
 
             tbody.innerHTML = reportData.map((row, i) => {
                 const rowBg = i % 2 === 0 ? 'rgba(0,0,0,0.03)' : 'transparent';
@@ -1016,6 +1059,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td style="padding: 0.65rem 1.25rem; color: #000; font-weight: 500; text-decoration: underline;">${escapeHtml(row.company)}</td>
                     <td style="padding: 0.65rem 1.25rem; text-align: right; font-weight: 700; color: #60a5fa;">${row.total_jobs}</td>
                     <td style="padding: 0.65rem 1.25rem; text-align: right; font-weight: 700; color: ${tailoredColor};">${row.tailored_count > 0 ? '✅ ' + row.tailored_count : '—'}</td>
+                    <td style="padding: 0.65rem 1.25rem; text-align: right; font-weight: 700; color: ${row.applied_count > 0 ? '#10b981' : '#333'};">${row.applied_count > 0 ? '🏆 ' + row.applied_count : '—'}</td>
                 </tr>`;
             }).join('');
 

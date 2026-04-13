@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Job Search AI</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="index.css">
+    <link rel="stylesheet" href="index.css?v=3">
     
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
@@ -69,9 +69,14 @@
             </div>
 
             <div style="display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-end;">
-                <label style="color: var(--text-muted); font-size: 0.8rem; display: flex; align-items: center; gap: 0.35rem; cursor: pointer;">
-                    <input type="checkbox" id="scrape-exec-toggle" style="accent-color: #3b82f6;"> Scan Executive Roles
-                </label>
+                <div style="display: flex; align-items: center; gap: 1rem;">
+                    <label style="color: var(--text-muted); font-size: 0.8rem; display: flex; align-items: center; gap: 0.35rem; cursor: pointer;">
+                        <input type="checkbox" id="scrape-exec-toggle" style="accent-color: #3b82f6;"> Scan Executive Roles
+                    </label>
+                </div>
+                <div style="display: flex; gap: 0.5rem; align-items: center; width: 100%;">
+                    <input type="text" id="custom-keywords-input" placeholder="Extra keywords (comma separated, e.g. payments, cloud, devops)" style="flex: 1; padding: 0.4rem 0.75rem; border-radius: 6px; border: 1px solid rgba(255,255,255,0.15); background: rgba(0,0,0,0.2); color: #fff; font-size: 0.8rem;">
+                </div>
                 <div style="display: flex; gap: 0.5rem;">
                     <button id="stop-scrape-btn" class="secondary-btn" style="display:none; color: #ef4444; border-color: rgba(239, 68, 68, 0.3); background: rgba(239, 68, 68, 0.05);">
                         <span class="icon">🛑</span> Stop
@@ -87,6 +92,12 @@
                         <span id="health-dot" style="position:absolute;top:5px;right:5px;width:8px;height:8px;border-radius:50%;background:#f59e0b;border:1px solid rgba(0,0,0,0.3);"></span>
                     </button>
                 </div>
+                <div id="scrape-status-bar" style="display:none; width:100%; padding: 0.5rem 0.75rem; border-radius: 8px; background: rgba(59,130,246,0.08); border: 1px solid rgba(59,130,246,0.2); font-size: 0.8rem; color: #60a5fa;">
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <div class="loader" style="width:14px; height:14px; border: 2px solid rgba(96,165,250,0.2); border-top: 2px solid #60a5fa; border-radius:50%; animation: spin 0.8s linear infinite; flex-shrink:0;"></div>
+                        <span id="scrape-status-text">Initializing Scraper...</span>
+                    </div>
+                </div>
                 <!-- Profile Settings Hook -->
                 <button id="open-profile-btn" class="secondary-btn" style="width:100%; border-color: rgba(255,255,255,0.1); justify-content:center;">
                     <span class="icon">⚙️</span> User Profile & Setup
@@ -101,6 +112,9 @@
                         <h2>Potential Jobs</h2>
                         <span id="job-count" class="badge">0</span>
                     </div>
+                    <label style="color: #60a5fa; font-weight: 600; font-size: 0.8rem; display: flex; align-items: center; gap: 0.35rem; cursor: pointer; padding: 0.25rem 0;">
+                        <input type="checkbox" id="tailored-only-toggle" style="accent-color: #10b981;"> Show Tailored Resumes Only
+                    </label>
                     <div class="comp-filter-container">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
                             <label for="min-comp-slider" style="font-size: 0.85rem; color: var(--text-muted);">Min. Compensation</label>
@@ -172,10 +186,11 @@
                             <th style="padding: 0.75rem 1.25rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.5px;">Company</th>
                             <th style="padding: 0.75rem 1.25rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.5px; text-align: right;">Jobs Found</th>
                             <th style="padding: 0.75rem 1.25rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.5px; text-align: right;">Resumes Tailored</th>
+                            <th style="padding: 0.75rem 1.25rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.5px; text-align: right;">Applied</th>
                         </tr>
                     </thead>
                     <tbody id="report-table-body">
-                        <tr><td colspan="3" style="padding: 2rem; text-align: center; color: var(--text-muted);">Loading...</td></tr>
+                        <tr><td colspan="4" style="padding: 2rem; text-align: center; color: var(--text-muted);">Loading...</td></tr>
                     </tbody>
                 </table>
             </div>
