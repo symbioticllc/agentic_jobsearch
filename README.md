@@ -4,12 +4,12 @@ An AI-powered job scraping and resume alignment system. Scrapes jobs from multip
 
 ## What it does
 
-1. **Scrapes** job listings from RemoteOK, Hacker News "Who is Hiring?", and direct company ATS portals (Greenhouse, Lever, Ashby — with a headless Chrome + LLM fallback for everything else)
+1. **Scrapes** job listings from RemoteOK, Hacker News "Who is Hiring?", and direct ATS portals (Workday, Greenhouse, Lever, Ashby — with headless Chrome + LLM fallback for unknown parsing)
 2. **Stores** all jobs in a local SQLite database with full-text search (FTS5)
 3. **Indexes** job descriptions into Redis Stack for semantic vector search
 4. **Ingests** context from base resumes, Brag Sheets, and LinkedIn URLs via the Profile Management UI — accepts `.pdf`, `.docx`, `.md`, and public **Google Docs URLs**
 5. **Tailors** your resume for a specific job using RAG-augmented LLM generation — pulls the most relevant sections of your project history and targets the job's ATS keywords
-6. **Scores** each job on a 0–100 fit scale; auto-penalizes roles below your target compensation profile
+6. **Scores** each job on a 0–100 fit scale across 5 dimensions (Technical, Domain, Seniority, Location, Lateral Pivot); auto-penalizes roles below target compensation
 7. **Saves** a tailored resume, customized cover letter, and an alterations report for every application
 8. **Exports** to Google Docs (`.docx`) via the Google Drive API
 
@@ -150,15 +150,11 @@ docker compose up
 | `project_history.md` | Fallback career history (ingested into RAG at startup) |
 | `target_companies/*.txt` | One company name per line — used by the Direct ATS scraper |
 
-### Search keywords
+Keywords used to filter scraped jobs have a broad default set in `main.go`.
 
-Keywords used to filter scraped jobs are set in `main.go`:
+You can **dynamically add keywords from the UI** by typing them (comma-separated) into the text box next to the Scrape button. They are instantly merged with the default base search.
 
-```go
-Keywords: []string{"golang", "go", "backend", "architect", "staff", "principal"},
-```
-
-Add `?exec=true` to the scrape request to also include executive/leadership keywords (`director`, `vp`, `cto`, etc.).
+Checking the **Scan Executive Roles** toggle in the UI adds 13 supplemental C-Suite and leadership titles (`CIO`, `CTO`, `SVP`, `Head Of`, etc.) to the search matrix.
 
 ## Scrapers
 
@@ -166,12 +162,13 @@ Add `?exec=true` to the scrape request to also include executive/leadership keyw
 |--------|--------|
 | **RemoteOK** | Public JSON API |
 | **HN Who's Hiring** | HN Algolia API + Firebase HN API (monthly thread) |
+| **Workday** | DuckDuckGo discovery → Hybrid Direct Native JSON API mapping (`wday/cxs/...`) |
 | **Greenhouse** | `boards-api.greenhouse.io` — guesses company slug |
 | **Lever** | `api.lever.co` — guesses company slug |
 | **Ashby** | `api.ashbyhq.com/posting-api` — guesses company slug |
-| **Agent Crawler** | DuckDuckGo Lite search → headless Chrome render → LLM extraction (fallback when all ATS guesses fail) |
+| **Agent Crawler** | DuckDuckGo Lite search → headless Chrome render → LLM extraction (fallback for unknown portals/Cloudflare blocks) |
 
-The Direct scraper runs up to 10 companies concurrently and tries Greenhouse → Lever → Ashby in order before falling back to the headless agent.
+The Direct scraper runs concurrently. It intelligently identifies Workday portals, searches for the correct subdomain using DDG, and hits undocumented native JSON APIs to bypass headless browser timeouts. It tries known ATS schemas in priority order before falling back to the LLM agent.
 
 ## Output
 
