@@ -9,44 +9,74 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/ollama"
 )
 
-// localModel is the single local Ollama model used for all generation tiers.
-// qwen3:30b-a3b — MoE architecture, ~3B active params per token.
-// Run: ollama pull qwen3:30b-a3b  (if not yet installed)
-const localModelName = "qwen3:30b-a3b"
+// Two-tier model architecture:
+//   ClassFast → fastModelName (qwen3:8b)  — bulk extraction, pre-scoring
+//   ClassDeep → deepModelName (qwen3:30b-a3b) — resume tailoring, cover letters
+const (
+	DefaultFastModel = "qwen3:8b"
+	DefaultDeepModel = "qwen3:30b-a3b"
+)
 
-var localLLM llms.Model
+var (
+	fastModelName = DefaultFastModel
+	deepModelName = DefaultDeepModel
 
-// ActiveModel returns the name of the currently configured local Ollama model.
-// Used by the health handler and startup logs to avoid hardcoding.
-func ActiveModel() string { return localModelName }
+	modelMu sync.RWMutex  // guards fast/deep LLM instances during hot-swap
+	fastLLM llms.Model    // lightweight: job extraction from HTML, pre-scoring
+	deepLLM llms.Model    // heavyweight: resume tailoring, cover letters, detailed scoring
+)
 
-// InitLLM sets up Ollama with a single local model (qwen3:30b-a3b) plus optional cloud failovers.
+// ActiveModel returns a description of the two-tier configuration.
+func ActiveModel() string {
+	modelMu.RLock()
+	defer modelMu.RUnlock()
+	return fmt.Sprintf("%s (fast) / %s (deep)", fastModelName, deepModelName)
+}
+
+// ActiveModelNames returns the individual fast and deep model names.
+func ActiveModelNames() (fast, deep string) {
+	modelMu.RLock()
+	defer modelMu.RUnlock()
+	return fastModelName, deepModelName
+}
+
+// InitLLM sets up both Ollama tiers plus optional cloud failovers.
 func InitLLM() error {
-	fmt.Println(" -> Initializing LLM Orchestration Layer (Single-Model Architecture)...")
+	fmt.Println(" -> Initializing LLM Orchestration Layer (Two-Tier Architecture)...")
 
 	var err error
 
-	// Single local model: Qwen3 30B-A3B handles all tasks — fast extraction through deep tailoring.
-	fmt.Printf("    - Loading Local Model (%s)...\n", localModelName)
-	localLLM, err = ollama.New(
+	// Fast tier: qwen3:8b — used for HTML extraction and bulk pre-scoring
+	fmt.Printf("    - Loading Fast Model (%s)...\n", fastModelName)
+	fastLLM, err = ollama.New(
 		ollama.WithServerURL(ollamaServerURL),
-		ollama.WithModel(localModelName),
+		ollama.WithModel(fastModelName),
+		ollama.WithRunnerNumCtx(8192),
+	)
+	if err != nil {
+		fmt.Printf("      ⚠️  Fast model initialization failed: %v\n", err)
+	}
+
+	// Deep tier: qwen3:30b-a3b — used for full resume tailoring
+	fmt.Printf("    - Loading Deep Model (%s)...\n", deepModelName)
+	deepLLM, err = ollama.New(
+		ollama.WithServerURL(ollamaServerURL),
+		ollama.WithModel(deepModelName),
 		ollama.WithRunnerNumCtx(16384),
 	)
 	if err != nil {
-		fmt.Printf("      ⚠️  Local model initialization failed: %v. Will failover to Cloud.\n", err)
+		fmt.Printf("      ⚠️  Deep model initialization failed: %v. Will failover to Cloud.\n", err)
 	}
 
-	// Note: We skip blocking connectivity tests here to avoid long hangs on startup.
-	// Connectivity will be verified lazily during the first request.
 	if os.Getenv("GEMINI_API_KEY") != "" {
-		fmt.Println(" ✅ Cloud Fast Pass (Gemini) integrated.")
+		fmt.Println(" ✅ Cloud Fast Pass (Gemini) integrated as failover.")
 	}
 
 	return nil
@@ -55,84 +85,86 @@ func InitLLM() error {
 // ollamaServerURL returns the configured Ollama server base URL.
 const ollamaServerURL = "http://127.0.0.1:11434"
 
-// PreloadModels fires a no-prompt warm-up request for the local Ollama model
-// with keep_alive=-1 so it stays pinned in GPU/CPU memory indefinitely.
-// This is especially important when model weights live on a NAS, where the
-// first cold-load over the network would otherwise stall the first real request.
-// Call this once after InitLLM(); it runs in the background and logs the outcome.
-func PreloadModels() {
-	models := []struct {
-		name  string
-		label string
-	}{
-		{localModelName, localModelName},
+// preloadModel fires a no-prompt warm-up for a single Ollama model with keep_alive=-1.
+func preloadModel(modelName string, numCtx int) {
+	fmt.Printf("    🔥 Preloading %s from NAS into memory (keep_alive=-1)...\n", modelName)
+	start := time.Now()
+
+	payload := map[string]interface{}{
+		"model":      modelName,
+		"keep_alive": -1,
+		"options": map[string]interface{}{
+			"num_ctx": numCtx,
+		},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("⚠️  Preload marshal error for %s: %v", modelName, err)
+		return
 	}
 
-	for _, m := range models {
-		go func(modelName, label string) {
-			fmt.Printf("    🔥 Preloading %s from NAS into memory (keep_alive=-1)...\n", label)
-			start := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
 
-			payload := map[string]interface{}{
-				"model":      modelName,
-				"keep_alive": -1, // never auto-unload
-				"options": map[string]interface{}{
-					"num_ctx": 16384,
-				},
-			}
-			body, err := json.Marshal(payload)
-			if err != nil {
-				log.Printf("⚠️  Preload marshal error for %s: %v", label, err)
-				return
-			}
-
-			// Use a generous timeout — NAS load of a 30B model can take a minute+
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-			defer cancel()
-
-			req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-				ollamaServerURL+"/api/generate", bytes.NewReader(body))
-			if err != nil {
-				log.Printf("⚠️  Preload request build error for %s: %v", label, err)
-				return
-			}
-			req.Header.Set("Content-Type", "application/json")
-
-			resp, err := http.DefaultClient.Do(req)
-			if err != nil {
-				log.Printf("⚠️  Preload failed for %s: %v", label, err)
-				return
-			}
-			resp.Body.Close()
-
-			if resp.StatusCode != http.StatusOK {
-				log.Printf("⚠️  Preload got non-200 for %s: %d", label, resp.StatusCode)
-				return
-			}
-
-			fmt.Printf("    ✅ %s preloaded and pinned in memory (%.1fs)\n", label, time.Since(start).Seconds())
-		}(m.name, m.label)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		ollamaServerURL+"/api/generate", bytes.NewReader(body))
+	if err != nil {
+		log.Printf("⚠️  Preload request build error for %s: %v", modelName, err)
+		return
 	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("⚠️  Preload failed for %s: %v", modelName, err)
+		return
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("⚠️  Preload got non-200 for %s: %d", modelName, resp.StatusCode)
+		return
+	}
+
+	fmt.Printf("    ✅ %s preloaded and pinned in memory (%.1fs)\n", modelName, time.Since(start).Seconds())
 }
 
-// ModelClass defines the priority level of the generation task
+// PreloadModels warms up both the fast and deep models in parallel.
+func PreloadModels() {
+	go preloadModel(fastModelName, 8192)
+	go preloadModel(deepModelName, 16384)
+}
+
+// ModelClass defines the priority level of the generation task.
 type ModelClass int
 
 const (
-	ClassFast ModelClass = iota
-	ClassDeep
+	ClassFast ModelClass = iota // Use fast lightweight model (qwen3:8b)
+	ClassDeep                   // Use deep heavyweight model (qwen3:30b-a3b)
 )
 
-// Generate sends a prompt to the appropriate LLM.
-// All local generation goes through qwen3:30b-a3b; cloud providers serve as failover.
+// Generate routes the prompt to the correct LLM tier with cloud failover.
 func Generate(ctx context.Context, class ModelClass, prompt string) (string, error) {
-	// Try local Qwen3 first (handles both fast and deep tasks)
-	if localLLM != nil {
-		resp, err := localLLM.Call(ctx, prompt)
+	// Grab a snapshot of the current models under read lock
+	modelMu.RLock()
+	var primaryLLM llms.Model
+	var primaryName string
+	if class == ClassFast {
+		primaryLLM = fastLLM
+		primaryName = fastModelName
+	} else {
+		primaryLLM = deepLLM
+		primaryName = deepModelName
+	}
+	modelMu.RUnlock()
+
+	// Try the appropriate local model first
+	if primaryLLM != nil {
+		resp, err := primaryLLM.Call(ctx, prompt)
 		if err == nil {
 			return resp, nil
 		}
-		log.Printf("⚠️  Local LLM (%s) failed, attempting Cloud failover: %v\n", localModelName, err)
+		log.Printf("⚠️  Local LLM (%s) failed, attempting Cloud failover: %v\n", primaryName, err)
 	}
 
 	// Cloud failover 1: Gemini (fast, reliable)
@@ -289,7 +321,7 @@ type ExtractedJob struct {
 
 // ExtractJobsFromText uses the LLM to process unstructured markdown/text from a career page and return jobs in JSON format.
 func ExtractJobsFromText(ctx context.Context, company string, text string) ([]ExtractedJob, error) {
-	if localLLM == nil {
+	if fastLLM == nil {
 		return nil, fmt.Errorf("LLM not initialized")
 	}
 
@@ -336,3 +368,69 @@ Output JSON array:`, company, text)
 	return jobs, nil
 }
 
+// ListAvailableModels queries the local Ollama server and returns installed model names.
+func ListAvailableModels() ([]string, error) {
+	resp, err := http.Get(ollamaServerURL + "/api/tags")
+	if err != nil {
+		return nil, fmt.Errorf("ollama unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var tags struct {
+		Models []struct {
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tags); err != nil {
+		return nil, fmt.Errorf("failed to decode model list: %w", err)
+	}
+
+	var names []string
+	for _, m := range tags.Models {
+		names = append(names, m.Name)
+	}
+	return names, nil
+}
+
+// ConfigureModels hot-swaps both LLM tier clients and triggers a background preload.
+// Safe to call at runtime without restarting the server.
+func ConfigureModels(newFast, newDeep string) error {
+	if newFast == "" || newDeep == "" {
+		return fmt.Errorf("both fast and deep model names are required")
+	}
+
+	// Build new clients
+	newFastLLM, err := ollama.New(
+		ollama.WithServerURL(ollamaServerURL),
+		ollama.WithModel(newFast),
+		ollama.WithRunnerNumCtx(8192),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to init fast model %q: %w", newFast, err)
+	}
+
+	newDeepLLM, err := ollama.New(
+		ollama.WithServerURL(ollamaServerURL),
+		ollama.WithModel(newDeep),
+		ollama.WithRunnerNumCtx(16384),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to init deep model %q: %w", newDeep, err)
+	}
+
+	// Atomically swap under write lock
+	modelMu.Lock()
+	fastModelName = newFast
+	deepModelName = newDeep
+	fastLLM = newFastLLM
+	deepLLM = newDeepLLM
+	modelMu.Unlock()
+
+	fmt.Printf(" ✅ Models hot-swapped: fast=%s deep=%s\n", newFast, newDeep)
+
+	// Background preload both into GPU/RAM memory
+	go preloadModel(newFast, 8192)
+	go preloadModel(newDeep, 16384)
+
+	return nil
+}

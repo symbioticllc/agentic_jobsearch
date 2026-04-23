@@ -41,7 +41,7 @@ type hnItem struct {
 	Time int64  `json:"time"`
 }
 
-func (h *HNScraper) Scrape(ctx context.Context, query SearchQuery) ([]Job, error) {
+func (h *HNScraper) Scrape(ctx context.Context, query SearchQuery, onJobs func([]Job)) ([]Job, error) {
 	// Step 1: Find the latest "Who is Hiring" thread via Algolia
 	params := url.Values{}
 	params.Set("query", "Ask HN: Who is hiring")
@@ -126,6 +126,9 @@ func (h *HNScraper) Scrape(ctx context.Context, query SearchQuery) ([]Job, error
 		})
 	}
 
+	if onJobs != nil && len(jobs) > 0 {
+		onJobs(jobs)
+	}
 	return jobs, nil
 }
 

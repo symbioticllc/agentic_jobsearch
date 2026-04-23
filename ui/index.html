@@ -5,11 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Job Search AI</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="index.css?v=3">
+    <link rel="stylesheet" href="index.css?v=17">
     
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
     <script src="https://unpkg.com/html-docx-js/dist/html-docx.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 </head>
 <body>
     <!-- Identity Context Gateway -->
@@ -84,18 +85,36 @@
                     <button id="scrape-btn" class="primary-btn">
                         <span class="icon">🔍</span> Scrape New Jobs
                     </button>
+                    <button id="vectorize-btn" class="primary-btn" style="background:#8b5cf6;">
+                        <span class="icon">🧠</span> Interpret & Vectorize
+                    </button>
                     <button id="open-report-btn" class="secondary-btn" style="border-color: rgba(192,132,252,0.4); color: #c084fc;">
                         <span class="icon">📊</span> Report
+                    </button>
+                    <button id="open-trends-btn" class="secondary-btn" style="border-color: rgba(251,191,36,0.4); color: #fbbf24;">
+                        <span class="icon">📈</span> Trends
                     </button>
                     <button id="open-health-btn" class="secondary-btn" title="System Health" style="border-color: rgba(16,185,129,0.4); color: #10b981; padding: 0.5rem 0.75rem; position: relative;">
                         <span class="icon">❤️</span>
                         <span id="health-dot" style="position:absolute;top:5px;right:5px;width:8px;height:8px;border-radius:50%;background:#f59e0b;border:1px solid rgba(0,0,0,0.3);"></span>
                     </button>
                 </div>
-                <div id="scrape-status-bar" style="display:none; width:100%; padding: 0.5rem 0.75rem; border-radius: 8px; background: rgba(59,130,246,0.08); border: 1px solid rgba(59,130,246,0.2); font-size: 0.8rem; color: #60a5fa;">
-                    <div style="display: flex; align-items: center; gap: 0.5rem;">
-                        <div class="loader" style="width:14px; height:14px; border: 2px solid rgba(96,165,250,0.2); border-top: 2px solid #60a5fa; border-radius:50%; animation: spin 0.8s linear infinite; flex-shrink:0;"></div>
-                        <span id="scrape-status-text">Initializing Scraper...</span>
+                <div id="scrape-status-bar" style="display:none; width:100%; padding: 0.65rem 0.85rem; border-radius: 10px; background: rgba(59,130,246,0.07); border: 1px solid rgba(59,130,246,0.2); font-size: 0.8rem; color: #60a5fa;">
+                    <!-- Row 1: icon + label + timer + stop -->
+                    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+                        <div id="scrape-spinner" class="loader" style="width:13px; height:13px; border: 2px solid rgba(96,165,250,0.2); border-top: 2px solid #60a5fa; border-radius:50%; animation: spin 0.8s linear infinite; flex-shrink:0;"></div>
+                        <span id="scrape-status-text" style="flex:1; font-weight:600;">Initializing Scraper...</span>
+                        <span id="scrape-elapsed" style="font-variant-numeric: tabular-nums; font-weight: 700; color: #a78bfa; min-width: 3.5ch; text-align:right;"></span>
+                        <button id="scrape-inline-stop-btn" onclick="document.getElementById('stop-scrape-btn').click()" style="display:none; background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.35); color: #f87171; border-radius: 5px; padding: 0.15rem 0.55rem; font-size: 0.75rem; cursor: pointer; line-height:1.6;">⬛ Stop</button>
+                    </div>
+                    <!-- Row 2: animated progress bar -->
+                    <div style="width:100%; height:4px; border-radius:2px; background:rgba(96,165,250,0.1); overflow:hidden; margin-bottom: 0.5rem;">
+                        <div id="scrape-progress-bar" style="height:100%; width:0%; background: linear-gradient(90deg,#3b82f6,#8b5cf6); border-radius:2px; transition: width 0.6s ease;"></div>
+                    </div>
+                    <!-- Row 3: per-source badges + job count -->
+                    <div style="display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;">
+                        <div id="scrape-source-badges" style="display:flex; gap:0.3rem; flex-wrap:wrap; flex:1;"></div>
+                        <span id="scrape-jobs-found" style="font-size: 0.78rem; color: #10b981; font-weight: 700; white-space:nowrap;"></span>
                     </div>
                 </div>
                 <!-- Profile Settings Hook -->
@@ -115,6 +134,40 @@
                     <label style="color: #60a5fa; font-weight: 600; font-size: 0.8rem; display: flex; align-items: center; gap: 0.35rem; cursor: pointer; padding: 0.25rem 0;">
                         <input type="checkbox" id="tailored-only-toggle" style="accent-color: #10b981;"> Show Tailored Resumes Only
                     </label>
+                    <div id="role-filter-container" style="display: flex; gap: 0.4rem; overflow-x: auto; padding-bottom: 0.5rem; margin-top: 0.5rem; scrollbar-width: none; -ms-overflow-style: none;">
+                        <button class="role-filter-btn active" data-role="All">All Roles</button>
+                        <button class="role-filter-btn" data-role="Executive / VP">Executive</button>
+                        <button class="role-filter-btn" data-role="Director">Director</button>
+                        <button class="role-filter-btn" data-role="Engineering Manager">Eng Manager</button>
+                        <button class="role-filter-btn" data-role="Staff / Principal IC">Staff/Principal</button>
+                        <button class="role-filter-btn" data-role="Senior Engineer">Senior Eng</button>
+                        <button class="role-filter-btn" data-role="Platform / Infrastructure">Platform/Infra</button>
+                        <button class="role-filter-btn" data-role="Data / ML">Data/ML</button>
+                    </div>
+                    <style>
+                        #role-filter-container::-webkit-scrollbar { display: none; }
+                        .role-filter-btn {
+                            background: rgba(255,255,255,0.05);
+                            border: 1px solid rgba(255,255,255,0.1);
+                            color: var(--text-muted);
+                            padding: 0.35rem 0.75rem;
+                            border-radius: 99px;
+                            font-size: 0.75rem;
+                            font-weight: 600;
+                            white-space: nowrap;
+                            cursor: pointer;
+                            transition: all 0.2s ease;
+                        }
+                        .role-filter-btn:hover {
+                            background: rgba(255,255,255,0.1);
+                            color: #fff;
+                        }
+                        .role-filter-btn.active {
+                            background: rgba(59, 130, 246, 0.15);
+                            border-color: rgba(59, 130, 246, 0.4);
+                            color: #60a5fa;
+                        }
+                    </style>
                     <div class="comp-filter-container">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
                             <label for="min-comp-slider" style="font-size: 0.85rem; color: var(--text-muted);">Min. Compensation</label>
@@ -213,7 +266,9 @@
             <div id="health-component-list" class="modal-body-scroll" style="display: flex; flex-direction: column; gap: 0.75rem; padding: 1rem 1.25rem; max-height: 60vh;">
                 <div style="text-align: center; color: var(--text-muted); padding: 2rem;">Checking system status...</div>
             </div>
+            </div>
         </div>
+    </dialog>
 
     <!-- Profile & Setup Modal -->
 
@@ -268,10 +323,134 @@
                     <span id="brag-upload-status" style="font-size:0.8rem; color:#10b981; display:none;"></span>
                 </div>
 
+                <hr style="border:none; border-top:1px solid rgba(255,255,255,0.08);">
+
+                <!-- LLM Model Configuration -->
+                <div class="modal-field-group">
+                    <label>🧠 LLM Model Configuration</label>
+                    <p>Select which local Ollama models handle each processing tier. Changes take effect immediately — no restart needed.</p>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 0.5rem;">
+                        <div>
+                            <label style="font-size: 0.78rem; color: var(--text-muted); display:block; margin-bottom:0.3rem;">⚡ Fast Tier <span style="color:#60a5fa; font-weight:400;">(scraping / extraction)</span></label>
+                            <select id="fast-model-select" class="modal-input" style="width:100%; padding:0.5rem 0.7rem; background: rgba(0,0,0,0.3);">
+                                <option value="">Loading models...</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="font-size: 0.78rem; color: var(--text-muted); display:block; margin-bottom:0.3rem;">🔬 Deep Tier <span style="color:#a78bfa; font-weight:400;">(resume tailoring)</span></label>
+                            <select id="deep-model-select" class="modal-input" style="width:100%; padding:0.5rem 0.7rem; background: rgba(0,0,0,0.3);">
+                                <option value="">Loading models...</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button id="save-models-btn" class="primary-btn" style="margin-top:0.75rem; width:100%; justify-content:center; background: linear-gradient(135deg, #6d28d9, #4f46e5);">
+                        <span class="icon">💾</span> Save & Load Models
+                    </button>
+                    <span id="model-save-status" style="font-size:0.8rem; color:#10b981; display:none; margin-top:0.4rem;"></span>
+                </div>
+
+                <hr style="border:none; border-top:1px solid rgba(255,255,255,0.08);">
+
+                <!-- Clear Cache -->
+                <div class="modal-field-group">
+                    <label style="color: #ef4444;">🚨 Danger Zone</label>
+                    <p>Wipe all saved jobs, resumes, and brag sheets from this tenant.</p>
+                    <button id="clear-cache-btn" class="secondary-btn" style="border-color: rgba(239, 68, 68, 0.4); color: #ef4444; width: 100%; justify-content: center; margin-top: 0.5rem;">
+                        <span class="icon">🗑️</span> Clear All Cache Data
+                    </button>
+                </div>
+
             </div>
         </div>
     </dialog>
 
-    <script src="app.js?v=2"></script>
+    <!-- Trends Analysis Modal -->
+    <dialog id="trends-modal" class="glass-modal" style="width: 960px; max-width: 95vw;">
+        <div class="modal-content">
+            <header class="modal-header">
+                <h2>📈 Job Market Trends</h2>
+                <div style="display:flex; align-items:center; gap:0.75rem;">
+                    <button id="trends-print-btn" style="background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); color: #94a3b8; border-radius: 7px; padding: 0.35rem 0.85rem; font-size: 0.8rem; cursor: pointer; display:flex; align-items:center; gap:0.4rem;" onclick="window.print()">
+                        🖨️ Print Report
+                    </button>
+                    <button id="close-trends-btn" class="close-btn">&times;</button>
+                </div>
+            </header>
+            <div class="modal-body-scroll" style="background: rgba(8,14,28,0.6); padding: 1.5rem; display: flex; flex-direction: column; gap: 2rem;">
+                <!-- Summary Stats Row -->
+                <div id="trend-summary-row" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem;"></div>
+
+                <!-- Chart 1: Daily Job Volume -->
+                <div style="background: rgba(15,23,42,0.7); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 1.25rem;">
+                    <h3 style="font-size: 0.95rem; font-weight: 600; margin-bottom: 1rem; color: #60a5fa;">Daily Job Volume</h3>
+                    <div style="position: relative; height: 240px;">
+                        <canvas id="chart-daily-volume"></canvas>
+                    </div>
+                </div>
+
+                <!-- Chart 2: Jobs by Company (stacked area / bar) -->
+                <div style="background: rgba(15,23,42,0.7); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 1.25rem;">
+                    <h3 style="font-size: 0.95rem; font-weight: 600; margin-bottom: 1rem; color: #a78bfa;">Top Companies Over Time</h3>
+                    <div style="position: relative; height: 280px;">
+                        <canvas id="chart-company-trend"></canvas>
+                    </div>
+                </div>
+
+                <!-- Chart 3: Jobs by Source + Top Hiring Companies -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                    <div style="background: rgba(15,23,42,0.7); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 1.25rem;">
+                        <h3 style="font-size: 0.95rem; font-weight: 600; margin-bottom: 1rem; color: #10b981;">Jobs by Source</h3>
+                        <div style="position: relative; height: 240px;">
+                            <canvas id="chart-source-breakdown"></canvas>
+                        </div>
+                    </div>
+                    <div style="background: rgba(15,23,42,0.7); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 1.25rem;">
+                        <h3 style="font-size: 0.95rem; font-weight: 600; margin-bottom: 1rem; color: #f97316;">Top Hiring Companies</h3>
+                        <div style="position: relative; height: 240px;">
+                            <canvas id="chart-company-bar"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Chart 4: Top Paying Companies -->
+                <div style="background: rgba(15,23,42,0.7); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 1.25rem;">
+                    <h3 style="font-size: 0.95rem; font-weight: 600; margin-bottom: 1rem; color: #fbbf24;">💰 Top Paying Companies</h3>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; align-items: start;">
+                        <div style="position: relative; height: 320px;">
+                            <canvas id="chart-top-paying"></canvas>
+                        </div>
+                        <div id="top-paying-table" style="font-size: 0.82rem;"></div>
+                    </div>
+                </div>
+
+                <!-- Section: Top Paying Jobs (individual listings) -->
+                <div style="background: rgba(15,23,42,0.7); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 1.25rem;">
+                    <h3 style="font-size: 0.95rem; font-weight: 600; margin-bottom: 1rem; color: #34d399;">🏆 Highest Paying Job Listings</h3>
+                    <div id="top-paying-jobs-table" style="font-size: 0.82rem;"></div>
+                </div>
+
+                <!-- Section: Job Category Breakdown -->
+                <div style="background: rgba(15,23,42,0.7); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 1.25rem;">
+                    <h3 style="font-size: 0.95rem; font-weight: 600; margin-bottom: 1rem; color: #818cf8;">📂 Job Category Breakdown</h3>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+                        <div>
+                            <p style="font-size: 0.75rem; color: #64748b; margin-bottom: 0.75rem;">Volume by Category</p>
+                            <div style="position: relative; height: 260px;">
+                                <canvas id="chart-category-volume"></canvas>
+                            </div>
+                        </div>
+                        <div>
+                            <p style="font-size: 0.75rem; color: #64748b; margin-bottom: 0.75rem;">Avg Salary by Category (where known)</p>
+                            <div style="position: relative; height: 260px;">
+                                <canvas id="chart-category-salary"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </dialog>
+
+    <script src="app.js?v=13"></script>
 </body>
 </html>

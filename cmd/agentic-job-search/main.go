@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -32,6 +33,17 @@ const (
 	port               = ":8081"
 )
 
+// scrapeProgress holds live telemetry about an in-progress scrape operation.
+type scrapeProgress struct {
+	Running       bool      `json:"running"`
+	StartTime     time.Time `json:"-"`
+	ElapsedSecs   int       `json:"elapsed_seconds"`
+	JobsFound     int       `json:"jobs_found"`
+	SourcesTotal  int       `json:"sources_total"`
+	SourcesDone   int       `json:"sources_done"`
+	SourceStatus  map[string]string `json:"source_statuses"` // name → "running"|"done"|"error"
+}
+
 type server struct {
 	db           *store.SQLiteStore
 	scraper      *scraper.Manager
@@ -39,10 +51,72 @@ type server struct {
 	ragPipeline  *rag.RAG
 	scrapeCancel context.CancelFunc
 	scrapeMutex  sync.Mutex
+	scrapeProg   scrapeProgress
+	scrapeProgMu sync.RWMutex
+}
+
+// ensureServicesRunning starts Ollama and Redis if they are not already reachable.
+// Each service is probed first; if the probe fails the process is launched and we
+// wait (up to 30 s) for it to become ready before continuing startup.
+func ensureServicesRunning() {
+	// ── Ollama (port 11434) ────────────────────────────────────────────────────
+	// Ollama is started by ./start.sh before the Go binary runs.
+	// We only probe here so we can emit a clear warning if it's still not up.
+	if err := tcpProbe("127.0.0.1:11434"); err != nil {
+		log.Printf("⚠️  Ollama is not reachable on port 11434 — LLM features will be unavailable. Run ./start.sh to auto-start it.")
+	} else {
+		fmt.Println("✅ Ollama already running.")
+	}
+
+	// ── Redis / Redis-Stack (port 6379) ────────────────────────────────────────
+	if err := tcpProbe("127.0.0.1:6379"); err != nil {
+		fmt.Println("⚡ Redis not detected — starting redis-stack-server...")
+		redisCmd := "redis-stack-server"
+		if _, lookErr := exec.LookPath(redisCmd); lookErr != nil {
+			log.Fatalf("❌ FATAL: 'redis-stack-server' not found in PATH.\n\nAgentic Jobs requires Redis Stack (not standard Redis) for its vector database (RediSearch) features used in resume tailoring.\n\nTo install on macOS:\n  brew tap redis-stack/redis-stack\n  brew install redis-stack\n\nOr run via Docker:\n  docker run -d --name redis-stack -p 6379:6379 redis/redis-stack-server:latest\n")
+		}
+		cmd := exec.Command(redisCmd)
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		if startErr := cmd.Start(); startErr != nil {
+			log.Printf("⚠️  Could not start Redis Stack (%s): %v", redisCmd, startErr)
+		} else {
+			fmt.Printf(" -> Waiting for Redis (%s) to become ready...\n", redisCmd)
+			waitForPort("127.0.0.1:6379", 30*time.Second)
+		}
+	} else {
+		fmt.Println("✅ Redis already running.")
+	}
+}
+
+// tcpProbe attempts a single TCP dial to addr. Returns nil if the port accepts connections.
+func tcpProbe(addr string) error {
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		return err
+	}
+	conn.Close()
+	return nil
+}
+
+// waitForPort polls addr once per second until it is reachable or deadline passes.
+func waitForPort(addr string, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if tcpProbe(addr) == nil {
+			fmt.Printf(" ✅ %s is ready.\n", addr)
+			return
+		}
+		time.Sleep(1 * time.Second)
+	}
+	log.Printf("⚠️  Timed out waiting for %s — continuing anyway", addr)
 }
 
 func main() {
 	fmt.Println("🚀 Initializing Agentic Job Search Architecture as Web Server...")
+
+	// ── Step 0: Ensure Ollama & Redis are up ─────────────────────────────────
+	ensureServicesRunning()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
@@ -65,8 +139,8 @@ func main() {
 	if err := llm.InitLLM(); err != nil {
 		log.Printf("LLM init error: %v\n", err)
 	}
-	llm.PreloadModels() // Background NAS → RAM warm-up; pins both models with keep_alive=-1
 
+	// ── Step 2b: Restore saved model selection from DB (after DB is ready) ────
 	if err := os.MkdirAll("./data", 0755); err != nil {
 		log.Fatalf("Failed to create data directory: %v", err)
 	}
@@ -75,6 +149,19 @@ func main() {
 		log.Fatalf("Store init error: %v\n", err)
 	}
 	defer db.Close()
+
+	// Load user-configured model names from SQLite (fall back to defaults if not set)
+	savedFast, _ := db.GetSetting("system", "llm_fast_model")
+	savedDeep, _ := db.GetSetting("system", "llm_deep_model")
+	if savedFast != "" && savedDeep != "" {
+		fmt.Printf(" -> Restoring saved models: fast=%s deep=%s\n", savedFast, savedDeep)
+		if err := llm.ConfigureModels(savedFast, savedDeep); err != nil {
+			log.Printf("⚠️ Failed to restore saved models, using defaults: %v", err)
+			llm.PreloadModels()
+		}
+	} else {
+		llm.PreloadModels() // Background NAS → RAM warm-up; pins both models with keep_alive=-1
+	}
 
 	// Ingest base context in the background — don't block server startup
 	// (nomic-embed-text may need to cold-load from NAS which takes time)
@@ -109,6 +196,8 @@ func main() {
 	// API Routes (Wrapped in Auth Middleware for Multi-Tenancy)
 	mux.HandleFunc("GET /api/jobs", authMiddleware(srv.handleGetJobs))
 	mux.HandleFunc("POST /api/scrape", authMiddleware(srv.handleScrapeJobs))
+	mux.HandleFunc("GET /api/scrape/status", authMiddleware(srv.handleScrapeStatus))
+	mux.HandleFunc("POST /api/vectorize", authMiddleware(srv.handleVectorizeJobs))
 	mux.HandleFunc("POST /api/scrape/stop", authMiddleware(srv.handleStopScrape))
 	mux.HandleFunc("POST /api/jobs/tailor/{id}", authMiddleware(srv.handleTailorJob))
 	mux.HandleFunc("POST /api/jobs/apply/{id}", authMiddleware(srv.handleSetApplied))
@@ -121,13 +210,18 @@ func main() {
 	mux.HandleFunc("GET /api/profile", authMiddleware(srv.handleGetProfile))
 	mux.HandleFunc("POST /api/profile", authMiddleware(srv.handleSaveProfile))
 	mux.HandleFunc("POST /api/profile/upload", authMiddleware(srv.handleUploadProfileFile))
+	mux.HandleFunc("POST /api/profile/clear", authMiddleware(srv.handleClearTenantCache))
 
 	// Analytics Routes
 	mux.HandleFunc("GET /api/report/companies", authMiddleware(srv.handleCompanyReport))
 	mux.HandleFunc("GET /api/report/sources", authMiddleware(srv.handleSourceReport))
+	mux.HandleFunc("GET /api/report/trends", authMiddleware(srv.handleTrendReport))
+	mux.HandleFunc("GET /api/jobs/history/{id}", authMiddleware(srv.handleTailoringHistory))
 
-	// System Health Route
+	// System Health + Model Config Routes
 	mux.HandleFunc("GET /api/health", srv.handleHealth)
+	mux.HandleFunc("GET /api/models", srv.handleListModels)
+	mux.HandleFunc("POST /api/models/configure", authMiddleware(srv.handleConfigureModels))
 
 	fmt.Printf("\n✅ SaaS Architecture online! Available at http://localhost%s\n", port)
 	if err := http.ListenAndServe(port, mux); err != nil {
@@ -154,6 +248,24 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 }
 
 // GET /api/profile
+func (s *server) handleClearTenantCache(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value("user_id").(string)
+	
+	// Delete jobs from SQLite
+	if err := s.db.ClearTenantData(userID); err != nil {
+		http.Error(w, "Failed to clear jobs", http.StatusInternalServerError)
+		return
+	}
+	
+	// Delete files from ./experience/userID
+	tenantDir := filepath.Join(".", "experience", userID)
+	os.RemoveAll(tenantDir) // deletes the directory and all contents
+	os.MkdirAll(tenantDir, 0755) // recreate empty directory
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "cleared"})
+}
+
 func (s *server) handleGetProfile(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value("user_id").(string)
 	linkedIn, _ := s.db.GetSetting(userID, "linkedin_url")
@@ -330,12 +442,9 @@ func (s *server) handleScrapeJobs(w http.ResponseWriter, r *http.Request) {
 	s.scrapeCancel = cancel
 	s.scrapeMutex.Unlock()
 
-	defer func() {
-		s.scrapeMutex.Lock()
-		s.scrapeCancel = nil
-		s.scrapeMutex.Unlock()
-		cancel()
-	}()
+	// We DO NOT defer the cancel and lock releasing here, 
+	// because scraping happens in the background. 
+	// We will handle it after the background task completes.
 
 	targetCompanies := loadTargetCompanies("./target_companies")
 
@@ -369,32 +478,133 @@ func (s *server) handleScrapeJobs(w http.ResponseWriter, r *http.Request) {
 		Remote:          true,
 		TargetCompanies: targetCompanies,
 	}
-	jobs, err := s.scraper.ScrapeAll(ctx, query)
-	if err != nil {
-		if ctx.Err() == context.Canceled {
-			http.Error(w, "Scraping was intentionally aborted by the user", http.StatusRequestTimeout)
+	
+	sourceNames := s.scraper.SourceNames()
+
+	// Initialize progress tracker
+	s.scrapeProgMu.Lock()
+	s.scrapeProg = scrapeProgress{
+		Running:      true,
+		StartTime:    time.Now(),
+		SourcesTotal: len(sourceNames),
+		SourcesDone:  0,
+		JobsFound:    0,
+		SourceStatus: make(map[string]string),
+	}
+	for _, n := range sourceNames {
+		s.scrapeProg.SourceStatus[n] = "running"
+	}
+	s.scrapeProgMu.Unlock()
+
+	w.WriteHeader(http.StatusAccepted)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "Background scraping initialized"})
+
+	// Extract userID from request context before it goes out of scope safely
+	userID := r.Context().Value("user_id").(string)
+
+	// Background execution
+	go func() {
+		// Clean up the mutex lock and cancel func when the overall scrape finally stops
+		defer func() {
+			s.scrapeMutex.Lock()
+			s.scrapeCancel = nil
+			s.scrapeMutex.Unlock()
+			cancel()
+			// Mark progress as done
+			s.scrapeProgMu.Lock()
+			s.scrapeProg.Running = false
+			s.scrapeProg.ElapsedSecs = int(time.Since(s.scrapeProg.StartTime).Seconds())
+			s.scrapeProgMu.Unlock()
+		}()
+
+		// Run scrape with per-source progress callbacks
+		jobs, err := s.scraper.ScrapeAllWithProgress(ctx, query, func(sourceName string, found int, isDone bool, isErr bool) {
+			s.scrapeProgMu.Lock()
+			defer s.scrapeProgMu.Unlock()
+			s.scrapeProg.JobsFound += found
+			
+			if isDone {
+				s.scrapeProg.SourcesDone++
+				if isErr {
+					s.scrapeProg.SourceStatus[sourceName] = "error"
+				} else {
+					s.scrapeProg.SourceStatus[sourceName] = "done"
+				}
+			}
+			s.scrapeProg.ElapsedSecs = int(time.Since(s.scrapeProg.StartTime).Seconds())
+		})
+		if err != nil {
+			if ctx.Err() == context.Canceled {
+				log.Printf("Scraping was intentionally aborted by the user")
+				return
+			}
+			log.Printf("Background scrape error: %v", err)
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+
+		added, err := s.db.SaveJobs(userID, jobs)
+		if err != nil {
+			log.Printf("Background db save error: %v", err)
+			return
+		}
+		// Update final job count with the deduped result
+		s.scrapeProgMu.Lock()
+		s.scrapeProg.JobsFound = len(jobs)
+		s.scrapeProgMu.Unlock()
+		log.Printf("✅ Background scraping complete. Added %d new jobs.", added)
+	}()
+}
+
+// GET /api/scrape/status — returns live telemetry for an in-progress scrape
+func (s *server) handleScrapeStatus(w http.ResponseWriter, r *http.Request) {
+	s.scrapeProgMu.RLock()
+	prog := s.scrapeProg
+	// Update elapsed live while still running
+	if prog.Running && !prog.StartTime.IsZero() {
+		prog.ElapsedSecs = int(time.Since(prog.StartTime).Seconds())
+	}
+	s.scrapeProgMu.RUnlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(prog)
+}
+
+// POST /api/vectorize
+func (s *server) handleVectorizeJobs(w http.ResponseWriter, r *http.Request) {
+	if s.ragPipeline == nil {
+		http.Error(w, "RAG pipeline not initialized. Check Redis connection.", http.StatusInternalServerError)
 		return
 	}
+
 	userID := r.Context().Value("user_id").(string)
-	added, err := s.db.SaveJobs(userID, jobs)
+	
+	// Fetch all jobs for the tenant
+	jobs, err := s.db.GetAllJobs(userID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Failed to read database state", http.StatusInternalServerError)
 		return
 	}
-	
-	// Background ingest into redis
+	if len(jobs) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "Skipped", "message": "No jobs found to vectorize."})
+		return
+	}
+
+	w.WriteHeader(http.StatusAccepted)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "Background vectorization initialized"})
+
+	// Run vector ingest in background
 	go func() {
+		fmt.Printf("📚 Backgrounding Redis Vector Ingestion for %d jobs...\n", len(jobs))
 		_, err := s.ragPipeline.IngestJobs(context.Background(), "jobs", jobs)
 		if err != nil {
-			log.Printf("⚠️ Background Redis ingestion error: %v", err)
+			fmt.Printf("⚠️ Redis ingestion error: %v\n", err)
+		} else {
+			fmt.Printf("✅ Redis Vector Ingestion Complete!\n")
 		}
 	}()
-	
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]int{"scraped": len(jobs), "added": added})
 }
 
 // GET /api/resumes
@@ -463,11 +673,14 @@ func (s *server) handleTailorJob(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Printf("📝 Background Tailoring initiated for %s @ %s [Tenant: %s]\n", job.Title, job.Company, userID)
 	
-	// Kick off background tailoring
+	// Kick off background tailoring with a hard 15-minute timeout.
+	// If the LLM hangs (Ollama stall, network drop, etc.) the context cancels
+	// and the job is marked 'failed' rather than stuck in 'processing' forever.
 	go func() {
-		ctx := context.Background()
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+		defer cancel()
 		linkedInUrl, _ := s.db.GetSetting(userID, "linkedin_url")
-		
+
 		result, err := s.aligner.TailorResume(ctx, job, string(baseResumeRaw), linkedInUrl, instructions)
 		if err != nil {
 			log.Printf("❌ Background tailoring failed for %s: %v\n", id, err)
@@ -525,8 +738,31 @@ func (s *server) handleGetTailorStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Enrich response with tailoring history
+	history, _ := s.db.GetTailoringHistory(userID, id)
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(job)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"job":     job,
+		"history": history,
+	})
+}
+
+// GET /api/jobs/history/{id} — returns tailoring score history for a specific job
+func (s *server) handleTailoringHistory(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	userID := r.Context().Value("user_id").(string)
+
+	history, err := s.db.GetTailoringHistory(userID, id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if history == nil {
+		history = []store.TailoringHistoryRow{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(history)
 }
 
 // POST /api/export/gdocs/{id}
@@ -569,6 +805,59 @@ func (s *server) handleGoogleDocsExport(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(map[string]string{"url": url})
 }
 
+// GET /api/models — returns available Ollama models and current selection
+func (s *server) handleListModels(w http.ResponseWriter, r *http.Request) {
+	models, err := llm.ListAvailableModels()
+	if err != nil {
+		http.Error(w, "Failed to list Ollama models: "+err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	fast, deep := llm.ActiveModelNames()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"models":     models,
+		"active_fast": fast,
+		"active_deep": deep,
+	})
+}
+
+// POST /api/models/configure — hot-swap model tiers and persist selection
+func (s *server) handleConfigureModels(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Fast string `json:"fast"`
+		Deep string `json:"deep"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Fast == "" || req.Deep == "" {
+		http.Error(w, "Both 'fast' and 'deep' model names are required", http.StatusBadRequest)
+		return
+	}
+
+	// Persist to SQLite so the selection survives server restarts
+	userID := r.Context().Value("user_id").(string)
+	_ = s.db.SaveSetting(userID, "llm_fast_model", req.Fast)
+	_ = s.db.SaveSetting(userID, "llm_deep_model", req.Deep)
+	// Also save under "system" scope so startup can read it without a user context
+	_ = s.db.SaveSetting("system", "llm_fast_model", req.Fast)
+	_ = s.db.SaveSetting("system", "llm_deep_model", req.Deep)
+
+	// Hot-swap the live models
+	if err := llm.ConfigureModels(req.Fast, req.Deep); err != nil {
+		http.Error(w, "Model swap failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status": "ok",
+		"fast":   req.Fast,
+		"deep":   req.Deep,
+	})
+}
+
 // GET /api/health — returns real-time status of all infrastructure components
 func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	type ComponentStatus struct {
@@ -577,8 +866,8 @@ func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		Latency string `json:"latency,omitempty"`
 	}
 	type HealthReport struct {
-		Overall    string                       `json:"overall"`
-		Components map[string]ComponentStatus   `json:"components"`
+		Overall    string                     `json:"overall"`
+		Components map[string]ComponentStatus `json:"components"`
 	}
 
 	components := make(map[string]ComponentStatus)
@@ -603,29 +892,42 @@ func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		}
 		json.NewDecoder(resp.Body).Decode(&tags)
 
-		activeModel := llm.ActiveModel()
-
-		// Check if our target model is installed
-		modelInstalled := false
+		// Build installed model set
+		installedSet := make(map[string]bool)
 		var installedNames []string
 		for _, m := range tags.Models {
 			installedNames = append(installedNames, m.Name)
-			if strings.HasPrefix(m.Name, activeModel) {
-				modelInstalled = true
+			installedSet[m.Name] = true
+		}
+
+		// Both tier models must be installed
+		fastM, deepM := llm.ActiveModelNames()
+		requiredModels := []string{fastM, deepM}
+		var missing []string
+		for _, req := range requiredModels {
+			found := false
+			for name := range installedSet {
+				if strings.HasPrefix(name, req) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				missing = append(missing, req)
 			}
 		}
-		if !modelInstalled {
+		if len(missing) > 0 {
 			allOk = false
 			components["ollama"] = ComponentStatus{
 				Status:  "degraded",
-				Detail:  fmt.Sprintf("%s not found. Installed: %s", activeModel, strings.Join(installedNames, ", ")),
+				Detail:  fmt.Sprintf("Missing models: %s. Installed: %s", strings.Join(missing, ", "), strings.Join(installedNames, ", ")),
 				Latency: fmt.Sprintf("%dms", latency),
 			}
 			return
 		}
 
-		// Check if model is currently loaded in memory via /api/ps
-		loaded := false
+		// Check which models are currently loaded in memory via /api/ps
+		loadedModels := make(map[string]bool)
 		psResp, psErr := http.Get("http://127.0.0.1:11434/api/ps")
 		if psErr == nil {
 			defer psResp.Body.Close()
@@ -636,19 +938,35 @@ func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
 			}
 			json.NewDecoder(psResp.Body).Decode(&ps)
 			for _, m := range ps.Models {
-				if strings.HasPrefix(m.Name, activeModel) {
-					loaded = true
+				loadedModels[m.Name] = true
+			}
+		}
+
+		var loadedList, notLoadedList []string
+		for _, req := range requiredModels {
+			found := false
+			for name := range loadedModels {
+				if strings.HasPrefix(name, req) {
+					found = true
+					break
 				}
+			}
+			if found {
+				loadedList = append(loadedList, req)
+			} else {
+				notLoadedList = append(notLoadedList, req)
 			}
 		}
 
 		status := "ok"
-		detail := activeModel + " installed"
-		if loaded {
-			detail = activeModel + " ✓ loaded in memory"
-		} else {
+		var detail string
+		if len(notLoadedList) > 0 {
 			status = "degraded"
-			detail = activeModel + " installed but not yet loaded (preload in progress)"
+			detail = fmt.Sprintf("Installed ✓ | In memory: [%s] | Preloading: [%s]",
+				strings.Join(loadedList, ", "), strings.Join(notLoadedList, ", "))
+			allOk = false
+		} else {
+			detail = fmt.Sprintf("Both models in memory ✓ fast=%s deep=%s", requiredModels[0], requiredModels[1])
 		}
 		components["ollama"] = ComponentStatus{Status: status, Detail: detail, Latency: fmt.Sprintf("%dms", latency)}
 	}()
@@ -726,6 +1044,18 @@ func (s *server) handleSourceReport(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(counts)
+}
+
+// GET /api/report/trends — returns time-series trend data for the trends dashboard
+func (s *server) handleTrendReport(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value("user_id").(string)
+	report, err := s.db.GetTrendData(userID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(report)
 }
 
 // loadTargetCompanies reads all txt files in the given directory and returns a unified list of company names

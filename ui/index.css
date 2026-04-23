@@ -391,17 +391,139 @@ body {
     line-height: 1.5;
 }
 
-.resume-preview {
-    background: #000;
-    padding: 1.5rem;
-    border-radius: 8px;
-    font-family: monospace;
-    white-space: pre-wrap;
+/* ── Detail Pane Tab System ─────────────────────────────────────────────── */
+.detail-tabs {
+    display: flex;
+    gap: 0.25rem;
+    padding: 0 2rem;
+    padding-top: 1.25rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    background: rgba(15, 23, 42, 0.3);
+}
+
+.detail-tab-btn {
+    position: relative;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    padding: 0.65rem 1.25rem;
     font-size: 0.85rem;
-    color: #a7f3d0;
-    max-height: 500px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    white-space: nowrap;
+}
+
+.detail-tab-btn:hover {
+    color: var(--text-main);
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.detail-tab-btn.active {
+    color: var(--text-main);
+    border-bottom-color: var(--accent);
+}
+
+.detail-tab-btn .tab-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    font-size: 0.65rem;
+    font-weight: 700;
+    background: rgba(16, 185, 129, 0.15);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.detail-tab-btn .tab-badge.processing {
+    background: rgba(96, 165, 250, 0.15);
+    color: #60a5fa;
+    border-color: rgba(96, 165, 250, 0.3);
+    animation: pulse-badge 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-badge {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+.tab-panel {
+    display: none;
+}
+
+.tab-panel.active {
+    display: block;
+}
+
+.resume-preview {
+    background: rgba(0, 0, 0, 0.4);
+    padding: 1.5rem;
+    border-radius: 10px;
+    font-family: 'Inter', -apple-system, sans-serif;
+    font-size: 0.88rem;
+    line-height: 1.7;
+    color: #e2e8f0;
+    max-height: 600px;
     overflow-y: auto;
-    border: 1px solid #333;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.resume-preview h1, .resume-preview h2, .resume-preview h3 {
+    color: #f1f5f9;
+    margin-top: 1.25rem;
+    margin-bottom: 0.5rem;
+}
+
+.resume-preview h1 { font-size: 1.15rem; }
+.resume-preview h2 { font-size: 1rem; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 0.35rem; }
+.resume-preview h3 { font-size: 0.92rem; }
+
+.resume-preview ul, .resume-preview ol {
+    padding-left: 1.25rem;
+    margin: 0.5rem 0;
+}
+
+.resume-preview li {
+    margin-bottom: 0.3rem;
+}
+
+.resume-preview strong {
+    color: #f8fafc;
+}
+
+.resume-preview a {
+    color: #60a5fa;
+    text-decoration: none;
+}
+
+.resume-preview p {
+    margin: 0.4rem 0;
+}
+
+/* Tailored output section cards */
+.tailored-section-card {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 12px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.25rem;
+}
+
+.tailored-section-card h3 {
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin-bottom: 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
 }
 
 .jd-box {
@@ -414,9 +536,11 @@ body {
 /* Resume Export Modal styling */
 .glass-modal {
     position: fixed;
-    top: 50%;
+    /* Universally anchor ALL pop-over modals near the top of the 
+       viewport so they NEVER clip off the top of the screen */
+    top: 5vh;
     left: 50%;
-    transform: translate(-50%, -50%);
+    transform: translateX(-50%);
     width: 90vw;
     max-width: 900px;
     height: 85vh;
@@ -429,6 +553,8 @@ body {
     padding: 0;
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
     z-index: 9999;
+    /* Prevent native dialog scroll, force internal scroll containers to work */
+    overflow: hidden;
 }
 
 .glass-modal[open] {
@@ -451,14 +577,16 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 1.5rem;
+    padding: 1.5rem 2rem;
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(0, 0, 0, 0.2);
 }
 
 .modal-header h2 {
-    font-size: 1.25rem;
-    font-weight: 600;
+    font-size: 1.85rem;
+    font-weight: 800;
     margin: 0;
+    letter-spacing: -0.02em;
 }
 
 .close-btn {
@@ -494,10 +622,65 @@ body {
 }
 
 /* Profile modal overrides - dark scrollable body */
+#profile-modal {
+    height: auto;
+    max-height: 90vh;
+    top: 5vh;
+    transform: translateX(-50%);
+}
+
+#profile-modal .modal-content {
+    height: auto;
+    max-height: 90vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
 #profile-modal .modal-body-scroll {
     background: rgba(8, 14, 28, 0.6);
     display: block;
     padding: 1.5rem;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+/* Trends modal scroll fix */
+#trends-modal {
+    /* Give the dialog itself a fixed viewport height so the inner
+       flex column can properly claim remaining space for scrolling. */
+    height: 92vh;
+    max-height: 92vh;
+    /* Anchor to top of viewport instead of centering vertically —
+       at 92vh the modal is effectively full-screen and centering
+       causes the top to clip above the viewport edge. */
+    top: 4vh;
+    transform: translateX(-50%);
+    /* Prevent the native <dialog> element from adding its own scroll */
+    overflow: hidden;
+}
+
+#trends-modal .modal-content {
+    /* Fill the dialog and participate in flex layout */
+    height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* The scrollable report body — this is the ONLY element that scrolls */
+#trends-modal .modal-body-scroll {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scroll-behavior: smooth;
+    /* Reset from base class so column flex doesn't vertically center causing top-clip */
+    justify-content: flex-start;
+    /* Ensure the scroll container can grow taller than its visible area */
+    -webkit-overflow-scrolling: touch;
 }
 
 /* Standard, legible modal inputs */
@@ -627,6 +810,82 @@ body {
         padding: 0;
         max-width: none;
     }
+
+    /* ── Trends report print mode ──────────────────────────────────────── */
+    #trends-modal,
+    #trends-modal * {
+        visibility: visible;
+    }
+
+    /* Stretch dialog to full page — no clipping */
+    #trends-modal {
+        position: absolute !important;
+        left: 0 !important;
+        top: 0 !important;
+        width: 100% !important;
+        height: auto !important;
+        max-height: none !important;
+        min-height: 0 !important;
+        overflow: visible !important;
+        border: none !important;
+        border-radius: 0 !important;
+        background: #fff !important;
+        box-shadow: none !important;
+        transform: none !important;
+        padding: 0 !important;
+    }
+
+    /* Make the inner flex column non-clipping */
+    #trends-modal .modal-content {
+        display: block !important;
+        height: auto !important;
+        overflow: visible !important;
+    }
+
+    /* Show the header title but hide buttons */
+    #trends-modal .modal-header {
+        display: flex !important;
+        background: transparent !important;
+        border-bottom: 2px solid #ddd !important;
+        padding-bottom: 0.75rem !important;
+        margin-bottom: 1rem !important;
+    }
+    #trends-modal .modal-header button { display: none !important; }
+
+    /* The key fix: let the body scroll region expand to natural height */
+    #trends-modal .modal-body-scroll {
+        overflow: visible !important;
+        max-height: none !important;
+        height: auto !important;
+        flex: none !important;
+        background: #fff !important;
+        color: #111 !important;
+        padding: 1rem !important;
+    }
+
+    /* Un-clip any inner scrollable table containers */
+    #trends-modal [style*="max-height"],
+    #trends-modal [style*="overflow-y"],
+    #trends-modal [style*="overflow: auto"] {
+        max-height: none !important;
+        overflow: visible !important;
+    }
+
+    /* Keep charts from blowing out page width */
+    #trends-modal canvas {
+        max-width: 100% !important;
+        page-break-inside: avoid;
+    }
+
+    /* Section-level page break hints */
+    #trends-modal .modal-body-scroll > div {
+        page-break-inside: avoid;
+        break-inside: avoid;
+        margin-bottom: 1.5rem;
+    }
+
+    /* Hide interactive-only controls */
+    #trends-print-btn { display: none !important; }
 }
 
 @keyframes spin {

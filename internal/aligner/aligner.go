@@ -12,6 +12,7 @@ import (
 
 	"github.com/leee/agentic-jobs/internal/llm"
 	"github.com/leee/agentic-jobs/internal/rag"
+	"github.com/leee/agentic-jobs/internal/salary"
 	"github.com/leee/agentic-jobs/internal/scraper"
 )
 
@@ -20,6 +21,30 @@ import (
 func stripThinkTags(s string) string {
 	re := regexp.MustCompile(`(?s)<think>.*?</think>`)
 	return strings.TrimSpace(re.ReplaceAllString(s, ""))
+}
+
+// cleanBaseResume normalizes the raw resume text before it is passed to the LLM.
+// Pandoc-exported .docx files contain formatting artifacts that confuse the model
+// into hallucinating "corrected" versions of real employer names, dates, and metrics.
+func cleanBaseResume(raw string) string {
+	// Remove Pandoc {.underline} spans — keep the visible link text only
+	re := regexp.MustCompile(`(?i)\[([^\]]+)\]\{[^}]*\}`)
+	s := re.ReplaceAllString(raw, "$1")
+
+	// Strip orphaned backslash escape sequences (e.g. \* \| \\ \,)
+	s = regexp.MustCompile(`\\([*|\\,])`).ReplaceAllString(s, "$1")
+
+	// Strip ONLY standalone trailing backslashes at the end of a line
+	// (Pandoc line-break markers) without touching real text content
+	s = regexp.MustCompile(`\\\s*\n`).ReplaceAllString(s, "\n")
+
+	// Strip any remaining lone backslashes that are NOT escape sequences
+	s = regexp.MustCompile(`(?m)^\\\s*$`).ReplaceAllString(s, "")
+
+	// Collapse more-than-2 consecutive blank lines down to 2
+	s = regexp.MustCompile(`\n{3,}`).ReplaceAllString(s, "\n\n")
+
+	return strings.TrimSpace(s)
 }
 
 // TailoredResult contains all the outputs of the tailoring process
@@ -76,8 +101,11 @@ func (a *Aligner) TailorResume(ctx context.Context, job scraper.Job, baseResume 
 		customInstrBlock = fmt.Sprintf("\n### 🌱 USER REVISION INSTRUCTIONS\nThe candidate explicitly requested the following adjustments for this generation:\n\"%s\"\nMake sure to respect these instructions while maintaining the format constraints.\n", customInstructions)
 	}
 
+	// Pre-process: strip Pandoc formatting artifacts that cause LLM hallucination
+	cleanedResume := cleanBaseResume(baseResume)
+
 	prompt := fmt.Sprintf(`
-You are an expert career coach and technical recruiter. Your task is to analyze a job description and tailor a professional resume.%s
+You are an expert technical recruiter and career coach. Your task is to produce a highly tailored, ATS-optimized resume for this specific job posting.%s
 
 ### IMMUTABLE FACTS — DO NOT CHANGE THESE UNDER ANY CIRCUMSTANCES
 The following elements from the Base Resume are SACRED and must appear EXACTLY as written:
@@ -87,71 +115,82 @@ The following elements from the Base Resume are SACRED and must appear EXACTLY a
 - **Degrees and universities**: Pennsylvania State University, Virginia Commonwealth University — use EXACT names and years.
 - **Patents**: All US patent numbers must be preserved exactly as listed.
 - **Certifications**: LSSBB, CISSP, AWS-ASA/ADA, CDMP, etc. — use exact acronyms and descriptions.
-- **Metrics and figures**: $6.5T in payment flows, ~4.5B annual transactions, ~30 million cardholders, ~$8MM cost reduction, 23 Patents, etc. — use EXACT numbers.
+- **Metrics and figures**: $6.5T in payment flows, ~4.5B annual transactions, ~30 million cardholders, ~$8MM cost reduction, etc. — use EXACT numbers.
 
-You may reword BULLET POINT DESCRIPTIONS to emphasize relevant skills, but the company name, title, dates, and core metrics for each role MUST remain unchanged.
+### ACTIVE TAILORING STRATEGY (follow this carefully)
+You must actively tailor the resume to highlight competencies, but remain 100%% factually accurate:
+1. **Professional Summary**: Rewrite the summary/objective to mirror the exact language and priorities of the JD. Use the job's own keywords. 3–4 punchy sentences max.
+2. **Highlight Areas of Competency**: Under each job, DO NOT completely rewrite or invent new bullet points. Instead, select existing bullet points that match the Job Description and highlight those specific areas of competency. You can slightly tweak phrasing to emphasize these competencies, but the facts must remain 100%% identical to the Base Resume.
+3. **Bullet Reordering**: Within each role, reorder existing bullet points so those most relevant to this JD appear FIRST.
+4. **De-emphasize Irrelevant Bullets**: Move unrelated bullets to the bottom of that role's list.
+5. **Skills Section**: Reorder skills/tech to front-load the technologies explicitly named in the JD.
+
+### RESUME CONTENT CONSTRAINT (READ CAREFULLY)
+The RESUME section you output MUST be derived EXCLUSIVELY from the "Base Resume" provided below.
+DO NOT import, blend, or merge any content from the "Experience Context" brag-sheet into the RESUME text body.
+The brag-sheet exists solely so you understand background depth when choosing WHICH bullet points to emphasize.
 
 ### Output Requirements
-1. **SCORE**: Provide a holistic job fit score from 0-100 based on the candidate's overall experience matching the JD. CRITICAL: The candidate requires ~$400k total comp. If the job explicitly posts compensation significantly lower (e.g. < $300k), penalize the score heavily. If compensation is "Not provided", you MUST use your own tech industry market data to silently estimate the compensation based on the Title, Company, and Seniority role. If your internal market estimate falls significantly below $300k, you must penalize the score heavily.
-2. **SUB-SCORES**: Break down the fit into 5 sub-categories, providing a 0-100 score for exactly these five dimensions:
-   - "Technical": Core stack alignment.
-   - "Domain": Industry/Sector knowledge mapping.
-   - "Seniority": Role leadership leveling.
-   - "Location": Compare the candidate's home location (found in their Base Resume — typically Richmond, VA metro area) against the job's posted location. Score 90-100 if the role is fully remote or in the candidate's metro area. Score 60-80 if hybrid with reasonable commute or partial remote. Score 20-50 if full relocation to another city is required. Score 0-20 if relocation to a high cost-of-living area with no remote option.
-   - "Lateral Shift": Measure how closely the proposed JD aligns to what the candidate CURRENTLY does in their most recent role. Read the candidate's current position responsibilities from the Base Resume and compare them to the JD's required duties. Score 80-100 if the JD is a natural continuation of their existing work (same domain, same tech, same type of deliverables). Score 50-70 if there is moderate overlap but some new functional areas. Score 20-40 if significant retooling or a career pivot is required. Score 0-20 if the role is in a completely different functional area.
-3. **MARKET_SALARY**: Based strictly on the job title, company, and typical tech industry market rates for this seniority, output a realistic estimated compensation range (e.g. "$250k - $320k").
-4. **BRIEF**: Provide a 1-2 sentence explanation of WHY the candidate is a good fit, or explicitly mention if the compensation might be a mismatch.
-5. **RESUME**: Provide the full tailored resume in Markdown. CRITICAL RULES:
-   - DO NOT INVENT PAST EXPERIENCE OR NEW ROLES.
-   - DO NOT list the target company as past work history!
-   - DO NOT rename, substitute, or paraphrase any employer names from the Base Resume. "Capital One Financial" must remain "Capital One Financial", never "Acme Corp" or any other name.
-   - Base your rewrite EXCLUSIVELY on the provided Base Resume and Context, carefully rewording accomplishments to highlight underlying technical synergies.
-6. **REPORT**: A list of specific alterations made.
-7. **COVER_LETTER**: Provide a 3-4 paragraph conversational and highly professional Cover Letter that naturally pitches the candidate's alignment.
+1. **SCORE**: Honest job fit score 0–100. Score the CANDIDATE'S ACTUAL BACKGROUND against the raw JD requirements — NOT the polished resume output. Use this rubric strictly:
+   - **90–100**: Near-perfect match. Candidate meets every required qualification AND most preferred ones. The title, industry, tech stack, and seniority are all direct matches.
+   - **75–89**: Strong match. Meets all hard requirements but 1–2 preferred skills or domain nuances are missing.
+   - **60–74**: Moderate match. Core skills transfer but meaningful gaps exist (wrong industry, missing major tech, level mismatch).
+   - **45–59**: Stretch. Significant gaps — candidate would need to learn key requirements or step up/down in seniority.
+   - **Below 45**: Poor fit. Fundamental mismatches in domain, technology, or seniority that cannot be bridged by tailoring.
+   BE HONEST AND DISCRIMINATING. Most jobs should score 55–80. A score above 88 is exceptional and must be explicitly justified. Do NOT inflate scores because the resume looks polished after tailoring.
+2. **SUB_SCORES**: Break down fit into exactly 3 dimensions (0–100 each): Technical (tech stack overlap), Domain (industry/product area match), Seniority (level alignment).
+3. **MARKET_SALARY**: Realistic estimated total comp range for this role in this market.
+4. **BRIEF**: 2 sentences max: WHY the candidate is a strong fit (or where the gap is if score < 70).
+5. **COVER_LETTER**: A 3–4 paragraph cover letter. Be specific — reference the company's product and connect it to a concrete verified achievement.
+6. **RESUME**: The complete tailored resume. CRITICAL RULES:
+   - DO NOT INVENT ANY PAST EXPERIENCE, ROLES, COMPANIES, DEGREES, OR METRICS.
+   - DO NOT list the target company as past work history.
+   - ALL content must trace back to the Base Resume provided below.
+   - Terminate the RESUME section with the exact marker: ---END_RESUME---
+7. **REPORT**: Bulleted list of specific tailoring changes made.
 
-### Strategic Extrapolation Constraints
-- **LinkedIn Profile Target**: %s
-- **Brag Sheet Vector**: The vector Context buffer additionally holds the candidate's core "Brag Sheet".
-- **Dynamic Skill Translation**: Leverage the provided LinkedIn profile and Context/Brag Sheet to purposefully craft experiences tailoring specifically to the target company's stack.
-- **ABSOLUTE TRUTH CONSTRAINT**: You must NEVER hallucinate or fabricate facts. You are authorized to *highlight*, *scale*, or *re-word* existing achievement DESCRIPTIONS to emphasize relevant skills (like CISSP or Cloud), but you are STRICTLY FORBIDDEN from:
-  1. Inventing jobs, companies, degrees, metrics, or technical skillsets that do not exist in the provided materials.
-  2. Renaming, substituting, or paraphrasing any employer names, university names, patent numbers, or certification acronyms.
+### ABSOLUTE TRUTH CONSTRAINT
+You must NEVER hallucinate or fabricate facts. You are STRICTLY FORBIDDEN from:
+  1. Inventing jobs, companies, degrees, metrics, or technical skillsets not in the provided Base Resume.
+  2. Renaming, substituting, or paraphrasing any employer names, etc.
   3. Changing employment dates or degree years.
-  If the JD requires a skill the candidate lacks, do NOT invent it!
+  If the JD requires a skill the candidate lacks, do NOT invent it.
 
---- 
+---
 ### Job Description
 Title: %s
 Company: %s
 Compensation: %s
 Description: %s
 
-### Base Resume
+### Base Resume (SOURCE OF TRUTH — all resume facts come ONLY from here)
 %s
 
-### Experience Context (Use these specific projects/details!)
+### Experience Context (Brag Sheet — use for context depth only, NOT as resume content)
 %s
 
 ---
-Return your response in this EXACT format:
-SCORE: [holistic score]
+Return your response in this EXACT format (do not deviate from these markers). You MUST write the ACTUAL generated text for the cover letter and resume. DO NOT USE PLACEHOLDERS OR INSTRUCTIONS.
+
+SCORE: [holistic score 0-100]
 SUB_SCORES:
 Technical: [score]
 Domain: [score]
 Seniority: [score]
-Location: [score]
-Lateral Shift: [score]
 MARKET_SALARY: [est salary range]
-BRIEF: [brief]
-RESUME: 
-[full resume]
----COVER_LETTER---
-[cover letter]
----REPORT---
-[alterations list]
-`, customInstrBlock, linkedinUrl, job.Title, job.Company, compStr, job.Description, baseResume, contextBuf.String())
+BRIEF: [brief analysis]
+COVER_LETTER:
+[WRITE THE ACTUAL TAILORED COVER LETTER TEXT HERE. NO PLACEHOLDERS.]
+RESUME:
+[WRITE THE FULL, ENTIRE TAILORED RESUME HERE IN MARKDOWN FORMAT. YOU MUST OUTPUT THE ACTUAL RESUME CONTENT BASED ON THE BASE RESUME. DO NOT OUTPUT PLACEHOLDER TEXT LIKE "Insert your resume here".]
+---END_RESUME---
+REPORT:
+[bulleted list of changes made]
+`, customInstrBlock, job.Title, job.Company, compStr, job.Description, cleanedResume, contextBuf.String())
 
 	// 3. Call LLM (Deep Class for high-fidelity tailoring)
+	// Log cleaned resume length for diagnostic purposes
+	fmt.Printf("📄 Base resume: %d chars raw → %d chars after Pandoc cleanup\n", len(baseResume), len(cleanedResume))
 	rawResponse, err := llm.Generate(ctx, llm.ClassDeep, prompt)
 	if err != nil {
 		return result, fmt.Errorf("llm generate failed: %w", err)
@@ -163,40 +202,105 @@ RESUME:
 	// 4. Parse response
 	result.Score = parseScore(response)
 	result.SubScores = parseSubScores(response)
-	result.MarketSalary = parseMarketSalary(response)
-	result.FitBrief = parseBrief(response)
-
-	parts := strings.Split(response, "---COVER_LETTER---")
-	var resumeRaw, letterAndReport string
 	
-	if len(parts) >= 2 {
-		resumeRaw = parts[0]
-		letterAndReport = parts[1]
-		
-		subParts := strings.Split(letterAndReport, "---REPORT---")
-		if len(subParts) >= 2 {
-			result.CoverLetter = cleanMarkdownTraces(strings.TrimSpace(subParts[0]))
-			result.Report = strings.TrimSpace(subParts[1])
-		} else {
-			result.CoverLetter = cleanMarkdownTraces(strings.TrimSpace(letterAndReport))
-			result.Report = "No separate report found."
-		}
+	apiSalary := salary.FetchMarketSalary(job.Company, job.Title)
+	if apiSalary != "" {
+		result.MarketSalary = apiSalary
 	} else {
-		// Fallback if parsing fails
-		resumeRaw = response
-		subParts := strings.Split(resumeRaw, "---REPORT---")
-		if len(subParts) >= 2 {
-			resumeRaw = subParts[0]
-			result.Report = subParts[1]
-		}
-		result.CoverLetter = "Cover Letter not generated."
+		result.MarketSalary = parseMarketSalary(response)
 	}
 	
-	resumeSplits := strings.SplitN(resumeRaw, "RESUME:", 2)
-	if len(resumeSplits) >= 2 {
-		result.TailoredResume = cleanMarkdownTraces(strings.TrimSpace(resumeSplits[1]))
+	result.FitBrief = parseBrief(response)
+
+	// ── Section Extraction ─────────────────────────────────────────────────
+	// Strategy: find the LAST standalone "RESUME" marker in the response
+	// (earlier occurrences may be in cover letter text or prompt echo).
+	// Then extract cover letter from between the metadata block and RESUME,
+	// and the resume body from after RESUME until END_RESUME/REPORT.
+
+	// Step 1: Locate the RESUME section boundary — find LAST occurrence
+	//         of "RESUME" or "RESUME:" on its own line.
+	resumeIdx := -1
+	reResumeMarker := regexp.MustCompile(`(?im)^RESUME[:\s]*$`)
+	allMatches := reResumeMarker.FindAllStringIndex(response, -1)
+	if len(allMatches) > 0 {
+		resumeIdx = allMatches[len(allMatches)-1][0] // use the LAST match
+	}
+
+	// Step 2: Extract RESUME body (everything after the marker until end delimiters)
+	if resumeIdx >= 0 {
+		// Find end of the "RESUME" header line
+		afterMarker := response[resumeIdx:]
+		nlIdx := strings.Index(afterMarker, "\n")
+		if nlIdx >= 0 {
+			resumeBody := afterMarker[nlIdx+1:]
+			// Trim at END_RESUME or REPORT delimiter
+			reEnd := regexp.MustCompile(`(?im)^---\s*END[_ ]?RESUME\s*---`)
+			if loc := reEnd.FindStringIndex(resumeBody); loc != nil {
+				resumeBody = resumeBody[:loc[0]]
+			}
+			reRpt := regexp.MustCompile(`(?im)^REPORT[:\s]*$`)
+			if loc := reRpt.FindStringIndex(resumeBody); loc != nil {
+				resumeBody = resumeBody[:loc[0]]
+			}
+			reRptDash := regexp.MustCompile(`(?im)^---\s*REPORT`)
+			if loc := reRptDash.FindStringIndex(resumeBody); loc != nil {
+				resumeBody = resumeBody[:loc[0]]
+			}
+			result.TailoredResume = cleanMarkdownTraces(strings.TrimSpace(resumeBody))
+		}
+	}
+
+	// Step 3: Extract COVER_LETTER — look in the region BEFORE the RESUME marker
+	preResume := response
+	if resumeIdx > 0 {
+		preResume = response[:resumeIdx]
+	}
+	reCLMarker := regexp.MustCompile(`(?im)^(?:COVER[_ ]?LETTER|---\s*COVER[_ ]?LETTER\s*---)[:\s]*$`)
+	clLoc := reCLMarker.FindStringIndex(preResume)
+	if clLoc != nil {
+		// Cover letter body = everything after the CL marker until the RESUME boundary
+		afterCL := preResume[clLoc[1]:]
+		result.CoverLetter = cleanMarkdownTraces(strings.TrimSpace(afterCL))
 	} else {
-		result.TailoredResume = cleanMarkdownTraces(strings.TrimSpace(resumeRaw))
+		// Fallback: look for "Cover Letter" as a heading (bold or plain)
+		reCLHeading := regexp.MustCompile(`(?im)^(?:\*\*\s*)?cover\s+letter(?:\s*\*\*)?[:\s]*$`)
+		clLocH := reCLHeading.FindStringIndex(preResume)
+		if clLocH != nil {
+			afterCL := preResume[clLocH[1]:]
+			result.CoverLetter = cleanMarkdownTraces(strings.TrimSpace(afterCL))
+		}
+	}
+
+	// Step 4: Extract REPORT — everything after the REPORT marker
+	reRPMarker := regexp.MustCompile(`(?im)^(?:REPORT|---\s*REPORT\s*---)[:\s]*$`)
+	rpLoc := reRPMarker.FindStringIndex(response)
+	if rpLoc != nil {
+		result.Report = strings.TrimSpace(response[rpLoc[1]:])
+	} else {
+		// Fallback: inline "REPORT:" with content on same line
+		reRPInline := regexp.MustCompile(`(?im)^REPORT:\s*(.+)`)
+		if m := reRPInline.FindStringSubmatch(response); len(m) > 1 {
+			result.Report = strings.TrimSpace(m[1])
+		} else {
+			result.Report = "No separate report found."
+		}
+	}
+
+	// Step 5: Post-process — strip any metadata lines that leaked into the resume body
+	result.TailoredResume = stripMetadataFromResume(result.TailoredResume)
+
+	fmt.Printf("\n📋 PARSE DIAGNOSTICS:\n")
+	fmt.Printf("  Raw response length:  %d chars\n", len(response))
+	fmt.Printf("  Score:                %d\n", result.Score)
+	fmt.Printf("  SubScores:            %v\n", result.SubScores)
+	fmt.Printf("  MarketSalary:         %s\n", result.MarketSalary)
+	fmt.Printf("  FitBrief:             %.100s\n", result.FitBrief)
+	fmt.Printf("  CoverLetter length:   %d chars\n", len(result.CoverLetter))
+	fmt.Printf("  TailoredResume:       %d chars\n", len(result.TailoredResume))
+	fmt.Printf("  Report length:        %d chars\n", len(result.Report))
+	if len(response) > 500 {
+		fmt.Printf("  Response HEAD (500 chars):\n---\n%s\n---\n", response[:500])
 	}
 
 	// Guard: if the LLM failed to produce any resume content, return an error
@@ -249,11 +353,73 @@ func cleanMarkdownTraces(s string) string {
 	return strings.TrimSpace(s)
 }
 
+// stripMetadataFromResume removes any SCORE/SUB_SCORES/BRIEF/MARKET_SALARY/COVER_LETTER
+// header lines and their content that may have leaked into the resume body.
+// This is the safety net — even if the primary extraction regex grabs too much,
+// this function ensures the resume body starts with actual resume content.
+func stripMetadataFromResume(resume string) string {
+	if resume == "" {
+		return resume
+	}
+
+	lines := strings.Split(resume, "\n")
+	// Known metadata headers that should never appear in a resume body
+	metaHeaders := regexp.MustCompile(`(?i)^\s*(SCORE|SUB[_ ]?SCORES?|BRIEF|MARKET[_ ]?SALARY|COVER[_ ]?LETTER|WHY YOU FIT|FIT BRIEF|---\s*END[_ ]?RESUME|---\s*COVER|---\s*REPORT)[:\s]*$`)
+	// Lines that look like sub-score detail lines (e.g. "Technical: 95" or "• Technical: 95 (...)")
+	metaScoreLine := regexp.MustCompile(`(?i)^\s*[•\-\*]?\s*(Technical|Domain|Seniority)[:\s]+\d+`)
+	// Pipe-separated score summary line
+	metaPipeLine := regexp.MustCompile(`(?i)(Technical|Domain|Seniority)\s*[:\s]+\s*\d+\s*\|`)
+	// Standalone score line (just a number, possibly with /100)
+	metaStandaloneScore := regexp.MustCompile(`^\s*\d{1,3}(/100)?\s*$`)
+
+	// Find where the real resume content starts by skipping metadata lines at the top
+	startIdx := 0
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue // skip blank lines
+		}
+		if metaHeaders.MatchString(trimmed) ||
+			metaScoreLine.MatchString(trimmed) ||
+			metaPipeLine.MatchString(trimmed) ||
+			metaStandaloneScore.MatchString(trimmed) {
+			startIdx = i + 1
+			continue
+		}
+		// Also skip lines that are just a dollar range (market salary value)
+		if regexp.MustCompile(`(?i)^\s*\$\d+[kK]?\s*[\-–—]\s*\$\d+[kK]?\s*$`).MatchString(trimmed) {
+			startIdx = i + 1
+			continue
+		}
+		// First line that doesn't match any metadata pattern — this is where the resume starts
+		break
+	}
+
+	if startIdx > 0 && startIdx < len(lines) {
+		stripped := strings.Join(lines[startIdx:], "\n")
+		result := strings.TrimSpace(stripped)
+		if len(result) > 50 {
+			fmt.Printf("  ✂️  Stripped %d metadata lines from resume body top\n", startIdx)
+			return result
+		}
+	}
+
+	return strings.TrimSpace(resume)
+}
+
 func parseScore(s string) int {
-	re := regexp.MustCompile(`(?i)SCORE:\s*(\d+)`)
+	// Try "SCORE: 95" or "SCORE: 95/100" (colon format)
+	re := regexp.MustCompile(`(?im)^\s*SCORE[:\s]+(\d+)`)
 	match := re.FindStringSubmatch(s)
 	if len(match) > 1 {
 		val, _ := strconv.Atoi(match[1])
+		return val
+	}
+	// Fallback: SCORE on its own line, number on the next line
+	re2 := regexp.MustCompile(`(?im)^\s*SCORE\s*$\s*^\s*(\d+)`)
+	match2 := re2.FindStringSubmatch(s)
+	if len(match2) > 1 {
+		val, _ := strconv.Atoi(match2[1])
 		return val
 	}
 	return 0
@@ -261,41 +427,99 @@ func parseScore(s string) int {
 
 func parseSubScores(s string) map[string]int {
 	scores := make(map[string]int)
+
 	lines := strings.Split(s, "\n")
-	
 	inSubScores := false
 	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(strings.ToUpper(line), "SUB_SCORES:") {
+		trimmed := strings.TrimSpace(line)
+		up := strings.ToUpper(trimmed)
+
+		// Detect SUB_SCORES header (with or without colon)
+		if strings.HasPrefix(up, "SUB_SCORES") || strings.HasPrefix(up, "SUB SCORES") {
 			inSubScores = true
+			// Check for inline content after header on same line
+			after := ""
+			for _, prefix := range []string{"SUB_SCORES:", "SUB SCORES:", "SUB_SCORES", "SUB SCORES"} {
+				if idx := strings.Index(up, prefix); idx >= 0 {
+					after = strings.TrimSpace(trimmed[idx+len(prefix):])
+					break
+				}
+			}
+			if after != "" && strings.Contains(after, "|") {
+				parsePipeSeparatedScores(after, scores)
+				break
+			}
 			continue
 		}
-		if inSubScores && strings.HasPrefix(strings.ToUpper(line), "BRIEF:") {
-			break
-		}
-		if inSubScores && strings.Contains(line, ":") {
-			parts := strings.SplitN(line, ":", 2)
-			if len(parts) == 2 {
-				k := strings.TrimSpace(parts[0])
-				vStr := strings.TrimSpace(parts[1])
-				// Clean non-numeric characters from vStr (like if they output " [85]" or "85/100")
-				re := regexp.MustCompile(`\d+`)
-				numStr := re.FindString(vStr)
-				if numStr != "" {
-					val, _ := strconv.Atoi(numStr)
-					scores[k] = val
+		if inSubScores {
+			// Stop at next major section
+			if strings.HasPrefix(up, "BRIEF") || strings.HasPrefix(up, "MARKET") ||
+				strings.HasPrefix(up, "COVER") || strings.HasPrefix(up, "RESUME") ||
+				strings.HasPrefix(up, "---") {
+				break
+			}
+			// Skip blank lines within the sub-scores block
+			if trimmed == "" {
+				continue
+			}
+			// Check for pipe-separated line (the score summary line)
+			if strings.Contains(trimmed, "|") {
+				parsePipeSeparatedScores(trimmed, scores)
+				continue
+			}
+			// Parse "Key: Value" or "• Key: Value (explanation)" format
+			clean := strings.TrimLeft(trimmed, "•-*– ")
+			if strings.Contains(clean, ":") {
+				parts := strings.SplitN(clean, ":", 2)
+				if len(parts) == 2 {
+					k := strings.TrimSpace(parts[0])
+					vStr := strings.TrimSpace(parts[1])
+					re := regexp.MustCompile(`^\s*(\d+)`)
+					numStr := re.FindStringSubmatch(vStr)
+					if len(numStr) > 1 {
+						val, _ := strconv.Atoi(numStr[1])
+						scores[k] = val
+					}
 				}
 			}
 		}
 	}
-	
+
+	// Fallback: scan entire response for "Technical NN" patterns anywhere
+	if len(scores) == 0 {
+		dimensions := []string{"Technical", "Domain", "Seniority"}
+		for _, dim := range dimensions {
+			re := regexp.MustCompile(`(?i)` + dim + `[:\s]+(\d+)`)
+			if m := re.FindStringSubmatch(s); len(m) > 1 {
+				val, _ := strconv.Atoi(m[1])
+				scores[dim] = val
+			}
+		}
+	}
+
 	return scores
 }
 
+// parsePipeSeparatedScores handles "Technical 95 | Domain 90 | Seniority 95 | Market Salary ..."
+func parsePipeSeparatedScores(s string, scores map[string]int) {
+	parts := strings.Split(s, "|")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		// Extract "DimensionName NN" pattern
+		re := regexp.MustCompile(`(?i)(Technical|Domain|Seniority)\s+(\d+)`)
+		if m := re.FindStringSubmatch(part); len(m) > 2 {
+			val, _ := strconv.Atoi(m[2])
+			// Capitalize first letter for consistency
+			key := strings.ToUpper(m[1][:1]) + strings.ToLower(m[1][1:])
+			scores[key] = val
+		}
+	}
+}
+
 func parseBrief(s string) string {
-	// Capture everything from BRIEF: until the next known section header or end-of-string.
-	// This handles both single-line and multi-line brief outputs from different LLMs.
-	re := regexp.MustCompile(`(?is)BRIEF:\s*(.*?)(?:\n(?:RESUME:|MARKET_SALARY:|SCORE:|SUB_SCORES:|---)|$)`)
+	// Match section header with or without colon, followed by content
+	// Handles: "BRIEF: text", "BRIEF\ntext", "WHY YOU FIT:\ntext"
+	re := regexp.MustCompile(`(?ims)^\s*(?:BRIEF|WHY YOU FIT|FIT BRIEF)[:\s]*$\s*(.*?)(?:^\s*(?:COVER|RESUME|MARKET|SCORE|SUB|---)|\z)`)
 	match := re.FindStringSubmatch(s)
 	if len(match) > 1 {
 		brief := strings.TrimSpace(match[1])
@@ -303,20 +527,39 @@ func parseBrief(s string) string {
 			return brief
 		}
 	}
-	// Fallback: grab single line
-	reSingle := regexp.MustCompile(`(?i)BRIEF:\s*([^\n]+)`)
-	matchS := reSingle.FindStringSubmatch(s)
-	if len(matchS) > 1 {
-		return strings.TrimSpace(matchS[1])
+	// Inline format: "BRIEF: text on same line"
+	re2 := regexp.MustCompile(`(?i)(?:BRIEF|WHY YOU FIT|FIT BRIEF)[:\s]+([^\n]+)`)
+	match2 := re2.FindStringSubmatch(s)
+	if len(match2) > 1 {
+		brief := strings.TrimSpace(match2[1])
+		if brief != "" {
+			return brief
+		}
 	}
-	return "No brief provided."
+	return "No why you fit / brief provided."
 }
 
 func parseMarketSalary(s string) string {
-	re := regexp.MustCompile(`(?i)MARKET_SALARY:\s*([^\n]+)`)
+	// "MARKET_SALARY: $280k–$350k" or "MARKET SALARY: $280k-$350k"
+	re := regexp.MustCompile(`(?i)MARKET[_ ]SALARY[:\s]+([^\n]+)`)
 	match := re.FindStringSubmatch(s)
 	if len(match) > 1 {
-		return strings.TrimSpace(match[1])
+		v := strings.TrimSpace(match[1])
+		if v != "" {
+			return v
+		}
+	}
+	// Inlined: "Market Salary $350k–$450k" or "Market Salary: $350k–$450k"
+	re2 := regexp.MustCompile(`(?i)Market\s+Salary[:\s]+(\$[^\n|]+)`)
+	match2 := re2.FindStringSubmatch(s)
+	if len(match2) > 1 {
+		return strings.TrimSpace(match2[1])
+	}
+	// Last resort: look for a dollar range anywhere near SCORE/SUB_SCORES block
+	re3 := regexp.MustCompile(`(?i)(\$\d+[kK]?\s*[–\-–]\s*\$\d+[kK]?)`)
+	match3 := re3.FindStringSubmatch(s)
+	if len(match3) > 1 {
+		return strings.TrimSpace(match3[1])
 	}
 	return "Unknown"
 }

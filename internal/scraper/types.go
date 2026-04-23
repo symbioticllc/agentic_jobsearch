@@ -46,5 +46,5 @@ type SearchQuery struct {
 // Scraper defines the interface all job source scrapers must implement
 type Scraper interface {
 	Name() string
-	Scrape(ctx context.Context, query SearchQuery) ([]Job, error)
+	Scrape(ctx context.Context, query SearchQuery, onJobs func([]Job)) ([]Job, error)
 }

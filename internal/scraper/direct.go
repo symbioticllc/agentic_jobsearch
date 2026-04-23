@@ -39,7 +39,7 @@ func NewDirectScraper() *DirectScraper {
 
 func (d *DirectScraper) Name() string { return "Direct-Target" }
 
-func (d *DirectScraper) Scrape(ctx context.Context, query SearchQuery) ([]Job, error) {
+func (d *DirectScraper) Scrape(ctx context.Context, query SearchQuery, onJobs func([]Job)) ([]Job, error) {
 	if len(query.TargetCompanies) == 0 {
 		return nil, nil
 	}
@@ -91,6 +91,9 @@ func (d *DirectScraper) Scrape(ctx context.Context, query SearchQuery) ([]Job, e
 
 	var allJobs []Job
 	for jobs := range jobsChan {
+		if onJobs != nil && len(jobs) > 0 {
+			onJobs(jobs)
+		}
 		allJobs = append(allJobs, jobs...)
 	}
 

@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -99,12 +100,38 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 	db.Exec("ALTER TABLE jobs ADD COLUMN tailoring_status TEXT DEFAULT 'pending'")
 	db.Exec("ALTER TABLE jobs ADD COLUMN applied INTEGER DEFAULT 0")
 
+	// Tailoring history — preserves scores from every tailoring pass
+	db.Exec(`CREATE TABLE IF NOT EXISTS tailoring_history (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id TEXT NOT NULL,
+		job_id TEXT NOT NULL,
+		score INTEGER DEFAULT 0,
+		sub_score_tech INTEGER DEFAULT 0,
+		sub_score_domain INTEGER DEFAULT 0,
+		sub_score_senior INTEGER DEFAULT 0,
+		market_salary TEXT,
+		fit_brief TEXT,
+		template_used TEXT,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (job_id) REFERENCES jobs(id)
+	)`)
+	db.Exec("CREATE INDEX IF NOT EXISTS idx_th_job ON tailoring_history(job_id, user_id)")
+
 	// Backfill FTS index for any existing DB records if the index is brand new
 	var ftsCount int
 	db.QueryRow("SELECT COUNT(*) FROM jobs_fts").Scan(&ftsCount)
 	if ftsCount == 0 {
 		fmt.Println(" -> Backfilling existing SQLite records into comprehensive FTS5 index...")
 		db.Exec("INSERT INTO jobs_fts(rowid, id, title, company, location, description, compensation, url, source, tags) SELECT rowid, id, title, company, location, description, compensation, url, source, tags FROM jobs;")
+	}
+
+	// On startup: reset any jobs that were stuck 'processing' from a previous crash.
+	// These will never complete — mark them 'failed' so the UI stops polling.
+	res, resetErr := db.Exec(`UPDATE jobs SET tailoring_status = 'failed' WHERE tailoring_status = 'processing'`)
+	if resetErr == nil {
+		if n, _ := res.RowsAffected(); n > 0 {
+			fmt.Printf(" ⚠️  Reset %d stale 'processing' tailoring job(s) to 'failed'\n", n)
+		}
 	}
 
 	fmt.Printf(" ✅ SQLite store ready at: %s\n", path)
@@ -143,6 +170,24 @@ func (s *SQLiteStore) SaveJobs(userID string, jobs []scraper.Job) (int, error) {
 	return inserted, nil
 }
 
+// ClearTenantData permanently deletes all jobs and tailoring history for a specific user.
+func (s *SQLiteStore) ClearTenantData(userID string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`DELETE FROM jobs WHERE user_id = ?`, userID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM tailoring_history WHERE user_id = ?`, userID); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
 // CountJobs returns the total number of jobs in the store
 func (s *SQLiteStore) CountJobs() (int, error) {
 	var count int
@@ -172,7 +217,7 @@ func (s *SQLiteStore) CountBySource(userID string) (map[string]int, error) {
 
 // GetAllJobs returns all jobs stored in the database
 func (s *SQLiteStore) GetAllJobs(userID string) ([]scraper.Job, error) {
-	rows, err := s.db.Query(`SELECT id, title, company, location, description, compensation, url, source, tags, remote, scraped_at, tailored_resume, tailored_report, fit_brief, market_salary, score, cover_letter, tailoring_status, applied, sub_score_location, sub_score_lateral FROM jobs WHERE user_id = ? ORDER BY scraped_at DESC`, userID)
+	rows, err := s.db.Query(`SELECT id, title, company, location, description, compensation, url, source, tags, remote, scraped_at, tailored_resume, tailored_report, fit_brief, market_salary, score, sub_score_tech, sub_score_domain, sub_score_senior, sub_score_location, sub_score_lateral, cover_letter, tailoring_status, applied FROM jobs WHERE user_id = ? ORDER BY scraped_at DESC`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -183,9 +228,9 @@ func (s *SQLiteStore) GetAllJobs(userID string) ([]scraper.Job, error) {
 		var j scraper.Job
 		var tagsStr, scrapedAtStr string
 		var comp, location, source, tr, trep, fb, ms, cl, status sql.NullString
-		var remoteInt, score, applied, loc, lat sql.NullInt64
+		var remoteInt, score, st, sd, ss, loc, lat, applied sql.NullInt64
 
-		if err := rows.Scan(&j.ID, &j.Title, &j.Company, &location, &j.Description, &comp, &j.URL, &source, &tagsStr, &remoteInt, &scrapedAtStr, &tr, &trep, &fb, &ms, &score, &cl, &status, &applied, &loc, &lat); err != nil {
+		if err := rows.Scan(&j.ID, &j.Title, &j.Company, &location, &j.Description, &comp, &j.URL, &source, &tagsStr, &remoteInt, &scrapedAtStr, &tr, &trep, &fb, &ms, &score, &st, &sd, &ss, &loc, &lat, &cl, &status, &applied); err != nil {
 			continue
 		}
 
@@ -199,6 +244,10 @@ func (s *SQLiteStore) GetAllJobs(userID string) ([]scraper.Job, error) {
 		j.CoverLetter = cl.String
 		j.TailoringStatus = status.String
 		j.Applied = applied.Int64 == 1
+		j.Score = int(score.Int64)
+		j.SubScoreTech = int(st.Int64)
+		j.SubScoreDomain = int(sd.Int64)
+		j.SubScoreSenior = int(ss.Int64)
 		j.SubScoreLocation = int(loc.Int64)
 		j.SubScoreLateral = int(lat.Int64)
 		if tagsStr != "" {
@@ -318,14 +367,58 @@ func (s *SQLiteStore) UpdateAppliedStatus(userID, id string, applied bool) error
 	return err
 }
 
-// SaveTailoredResult permanently associates an LLM generated layout with a specific Tenant's Job
+// SaveTailoredResult permanently associates an LLM generated layout with a specific Tenant's Job.
+// It also logs the scores to tailoring_history so previous results are preserved.
 func (s *SQLiteStore) SaveTailoredResult(userID string, id string, resume string, report string, brief string, salary string, score int, st int, sd int, ss int, sloc int, slat int, coverLetter string) error {
+	// 1. Log to history table (preserves every tailoring pass)
+	s.db.Exec(`
+		INSERT INTO tailoring_history (user_id, job_id, score, sub_score_tech, sub_score_domain, sub_score_senior, market_salary, fit_brief)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, userID, id, score, st, sd, ss, salary, brief)
+
+	// 2. Update the active job record with latest results
 	_, err := s.db.Exec(`
 		UPDATE jobs
 		SET tailored_resume = ?, tailored_report = ?, fit_brief = ?, market_salary = ?, score = ?, sub_score_tech = ?, sub_score_domain = ?, sub_score_senior = ?, sub_score_location = ?, sub_score_lateral = ?, cover_letter = ?, tailoring_status = 'completed', tags = CASE WHEN tags LIKE '%tailored%' THEN tags WHEN tags = '' OR tags IS NULL THEN 'tailored' ELSE tags || ',tailored' END
 		WHERE id = ? AND user_id = ?
 	`, resume, report, brief, salary, score, st, sd, ss, sloc, slat, coverLetter, id, userID)
 	return err
+}
+
+// TailoringHistoryRow represents one historical tailoring attempt
+type TailoringHistoryRow struct {
+	ID             int    `json:"id"`
+	Score          int    `json:"score"`
+	SubScoreTech   int    `json:"sub_score_tech"`
+	SubScoreDomain int    `json:"sub_score_domain"`
+	SubScoreSenior int    `json:"sub_score_senior"`
+	MarketSalary   string `json:"market_salary"`
+	FitBrief       string `json:"fit_brief"`
+	CreatedAt      string `json:"created_at"`
+}
+
+// GetTailoringHistory returns all previous tailoring attempts for a given job
+func (s *SQLiteStore) GetTailoringHistory(userID string, jobID string) ([]TailoringHistoryRow, error) {
+	rows, err := s.db.Query(`
+		SELECT id, score, sub_score_tech, sub_score_domain, sub_score_senior, 
+		       COALESCE(market_salary,''), COALESCE(fit_brief,''), created_at
+		FROM tailoring_history
+		WHERE user_id = ? AND job_id = ?
+		ORDER BY created_at DESC
+	`, userID, jobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var history []TailoringHistoryRow
+	for rows.Next() {
+		var h TailoringHistoryRow
+		if err := rows.Scan(&h.ID, &h.Score, &h.SubScoreTech, &h.SubScoreDomain, &h.SubScoreSenior, &h.MarketSalary, &h.FitBrief, &h.CreatedAt); err == nil {
+			history = append(history, h)
+		}
+	}
+	return history, nil
 }
 
 // Setup and Configuration Logic maps to specific explicitly routed users
@@ -376,6 +469,410 @@ func (s *SQLiteStore) GetCompanyReport(userID string) ([]CompanyReportRow, error
 		report = append(report, row)
 	}
 	return report, nil
+}
+// TrendDataPoint represents a single day's aggregated job data
+type TrendDataPoint struct {
+	Date       string `json:"date"`
+	Total      int    `json:"total"`
+	Company    string `json:"company,omitempty"`
+	Source     string `json:"source,omitempty"`
+}
+
+// TopPayingCompanyRow holds max-salary data for a company
+type TopPayingCompanyRow struct {
+	Company    string `json:"company"`
+	MaxSalary  int    `json:"max_salary"`   // highest parsed value in thousands
+	SalaryText string `json:"salary_text"`  // human-readable original text
+	JobCount   int    `json:"job_count"`
+}
+
+// TopPayingJobRow holds salary data for an individual job listing
+type TopPayingJobRow struct {
+	ID         string `json:"id"`
+	Title      string `json:"title"`
+	Company    string `json:"company"`
+	MaxSalary  int    `json:"max_salary"`
+	SalaryText string `json:"salary_text"`
+	Source     string `json:"source"` // "compensation" or "market_salary"
+}
+
+// CategoryRow holds job count per role category
+type CategoryRow struct {
+	Category string `json:"category"`
+	Count    int    `json:"count"`
+	AvgSalary int   `json:"avg_salary"` // 0 if unknown
+}
+
+// TrendReport contains all time-series data for the trends dashboard
+type TrendReport struct {
+	DailyTotals        []TrendDataPoint      `json:"daily_totals"`
+	DailyByCompany     []TrendDataPoint      `json:"daily_by_company"`
+	DailyBySource      []TrendDataPoint      `json:"daily_by_source"`
+	TopCompanies       []CompanyReportRow    `json:"top_companies"`
+	TopPayingCompanies []TopPayingCompanyRow `json:"top_paying_companies"`
+	TopPayingJobs      []TopPayingJobRow     `json:"top_paying_jobs"`
+	Categories         []CategoryRow         `json:"categories"`
+}
+
+// GetTrendData returns time-series job data for trend analysis charts
+func (s *SQLiteStore) GetTrendData(userID string) (*TrendReport, error) {
+	report := &TrendReport{}
+
+	// 1. Daily totals (all jobs per day)
+	rows, err := s.db.Query(`
+		SELECT DATE(scraped_at) as day, COUNT(*) as cnt
+		FROM jobs WHERE user_id = ?
+		GROUP BY DATE(scraped_at)
+		ORDER BY day ASC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var dp TrendDataPoint
+		if err := rows.Scan(&dp.Date, &dp.Total); err == nil {
+			report.DailyTotals = append(report.DailyTotals, dp)
+		}
+	}
+
+	// 2. Daily by top companies (top 10 by volume)
+	rows2, err := s.db.Query(`
+		SELECT DATE(scraped_at) as day, company, COUNT(*) as cnt
+		FROM jobs
+		WHERE user_id = ? AND company IN (
+			SELECT company FROM jobs WHERE user_id = ?
+			GROUP BY company ORDER BY COUNT(*) DESC LIMIT 10
+		)
+		GROUP BY DATE(scraped_at), company
+		ORDER BY day ASC, cnt DESC
+	`, userID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows2.Close()
+	for rows2.Next() {
+		var dp TrendDataPoint
+		if err := rows2.Scan(&dp.Date, &dp.Company, &dp.Total); err == nil {
+			report.DailyByCompany = append(report.DailyByCompany, dp)
+		}
+	}
+
+	// 3. Daily by source
+	rows3, err := s.db.Query(`
+		SELECT DATE(scraped_at) as day, source, COUNT(*) as cnt
+		FROM jobs WHERE user_id = ?
+		GROUP BY DATE(scraped_at), source
+		ORDER BY day ASC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows3.Close()
+	for rows3.Next() {
+		var dp TrendDataPoint
+		if err := rows3.Scan(&dp.Date, &dp.Source, &dp.Total); err == nil {
+			report.DailyBySource = append(report.DailyBySource, dp)
+		}
+	}
+
+	// 4. Top companies for the pie/bar chart
+	report.TopCompanies, _ = s.GetCompanyReport(userID)
+
+	// 5. Top paying companies
+	report.TopPayingCompanies, _ = s.getTopPayingCompanies(userID)
+
+	// 6. Top paying individual jobs
+	report.TopPayingJobs, _ = s.getTopPayingJobs(userID)
+
+	// 7. Job category breakdown
+	report.Categories, _ = s.getCategoryBreakdown(userID)
+
+	return report, nil
+}
+
+// getTopPayingJobs ranks individual job listings by parsed salary, returning up to 20
+func (s *SQLiteStore) getTopPayingJobs(userID string) ([]TopPayingJobRow, error) {
+	rows, err := s.db.Query(`
+		SELECT id, title, company,
+			COALESCE(compensation,'') as comp,
+			COALESCE(market_salary,'') as ms
+		FROM jobs
+		WHERE user_id = ? AND (compensation != '' OR market_salary != '')
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type rawJob struct {
+		id, title, company, comp, ms string
+	}
+	var rawJobs []rawJob
+	for rows.Next() {
+		var r rawJob
+		if err := rows.Scan(&r.id, &r.title, &r.company, &r.comp, &r.ms); err == nil {
+			rawJobs = append(rawJobs, r)
+		}
+	}
+
+	var result []TopPayingJobRow
+	for _, r := range rawJobs {
+		// Prefer market_salary (LLM-derived, more reliable) over raw scraped compensation
+		source := "compensation"
+		text := r.comp
+		if r.ms != "" {
+			text = r.ms
+			source = "market_salary"
+		}
+		val, snippet := parseBestSalary(text)
+		if val > 0 {
+			result = append(result, TopPayingJobRow{
+				ID:        r.id,
+				Title:     r.title,
+				Company:   r.company,
+				MaxSalary: val,
+				SalaryText: snippet,
+				Source:    source,
+			})
+		}
+	}
+
+	// Sort descending
+	for i := 0; i < len(result)-1; i++ {
+		for j := i + 1; j < len(result); j++ {
+			if result[j].MaxSalary > result[i].MaxSalary {
+				result[i], result[j] = result[j], result[i]
+			}
+		}
+	}
+	if len(result) > 20 {
+		result = result[:20]
+	}
+	return result, nil
+}
+
+// getCategoryBreakdown buckets jobs by role category inferred from title keywords
+func (s *SQLiteStore) getCategoryBreakdown(userID string) ([]CategoryRow, error) {
+	rows, err := s.db.Query(`
+		SELECT title, COALESCE(compensation,''), COALESCE(market_salary,'')
+		FROM jobs WHERE user_id = ?
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type catData struct {
+		count     int
+		salaries  []int
+	}
+	cats := map[string]*catData{}
+
+	categoryOrder := []string{
+		"Executive / VP",
+		"Director",
+		"Engineering Manager",
+		"Staff / Principal IC",
+		"Senior Engineer",
+		"Product Management",
+		"Platform / Infrastructure",
+		"Security",
+		"Data / ML",
+		"Other",
+	}
+	for _, c := range categoryOrder {
+		cats[c] = &catData{}
+	}
+
+	classify := func(title string) string {
+		t := strings.ToLower(title)
+		switch {
+		case containsAny(t, "chief", " cto", " cio", " ciso", "vp ", "vp,", "vice president", "svp", "evp", "managing director"):
+			return "Executive / VP"
+		case containsAny(t, "director"):
+			return "Director"
+		case containsAny(t, "engineering manager", "head of engineering", "head of platform", "head of infra"):
+			return "Engineering Manager"
+		case containsAny(t, "staff ", "principal ", "distinguished ", "fellow"):
+			return "Staff / Principal IC"
+		case containsAny(t, "senior ", "sr.", "sr "):
+			return "Senior Engineer"
+		case containsAny(t, "product manager", "product management", "product owner", "product specialist", "product lead"):
+			return "Product Management"
+		case containsAny(t, "platform", "infrastructure", "devops", "sre", "reliability", "site reliability"):
+			return "Platform / Infrastructure"
+		case containsAny(t, "security", "vulnerability", "compliance", "ciso", "soc "):
+			return "Security"
+		case containsAny(t, "data", "machine learning", "ml ", "ai ", "analytics", "scientist"):
+			return "Data / ML"
+		default:
+			return "Other"
+		}
+	}
+
+	for rows.Next() {
+		var title, comp, ms string
+		if err := rows.Scan(&title, &comp, &ms); err != nil {
+			continue
+		}
+		cat := classify(title)
+		cats[cat].count++
+
+		// Parse salary if available
+		text := comp
+		if ms != "" {
+			text = ms
+		}
+		if text != "" {
+			if val, _ := parseBestSalary(text); val > 0 {
+				cats[cat].salaries = append(cats[cat].salaries, val)
+			}
+		}
+	}
+
+	var result []CategoryRow
+	for _, name := range categoryOrder {
+		d := cats[name]
+		if d.count == 0 {
+			continue
+		}
+		avg := 0
+		if len(d.salaries) > 0 {
+			sum := 0
+			for _, s := range d.salaries {
+				sum += s
+			}
+			avg = sum / len(d.salaries)
+		}
+		result = append(result, CategoryRow{Category: name, Count: d.count, AvgSalary: avg})
+	}
+	return result, nil
+}
+
+// containsAny returns true if s contains any of the given substrings
+func containsAny(s string, subs ...string) bool {
+	for _, sub := range subs {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
+}
+
+// getTopPayingCompanies parses salary figures from compensation and market_salary fields.
+// SQLite lacks regex, so we fetch the raw text and parse in Go.
+func (s *SQLiteStore) getTopPayingCompanies(userID string) ([]TopPayingCompanyRow, error) {
+	// Collect per-company: all compensation snippets and job count
+	rows, err := s.db.Query(`
+		SELECT
+			company,
+			COUNT(*) as job_count,
+			GROUP_CONCAT(COALESCE(compensation,''), '|||') as comp_texts,
+			GROUP_CONCAT(COALESCE(market_salary,''), '|||') as salary_texts
+		FROM jobs
+		WHERE user_id = ? AND company != ''
+		GROUP BY company
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type raw struct {
+		company     string
+		jobCount    int
+		compTexts   string
+		salaryTexts string
+	}
+	var raws []raw
+	for rows.Next() {
+		var r raw
+		if err := rows.Scan(&r.company, &r.jobCount, &r.compTexts, &r.salaryTexts); err == nil {
+			raws = append(raws, r)
+		}
+	}
+
+	// Parse salary numbers from combined text
+	var result []TopPayingCompanyRow
+	for _, r := range raws {
+		combined := r.compTexts + "|||" + r.salaryTexts
+		maxVal, bestText := parseBestSalary(combined)
+		if maxVal > 0 {
+			result = append(result, TopPayingCompanyRow{
+				Company:    r.company,
+				MaxSalary:  maxVal,
+				SalaryText: bestText,
+				JobCount:   r.jobCount,
+			})
+		}
+	}
+
+	// Sort descending by max salary
+	for i := 0; i < len(result)-1; i++ {
+		for j := i + 1; j < len(result); j++ {
+			if result[j].MaxSalary > result[i].MaxSalary {
+				result[i], result[j] = result[j], result[i]
+			}
+		}
+	}
+
+	// Return top 15
+	if len(result) > 15 {
+		result = result[:15]
+	}
+	return result, nil
+}
+
+// parseBestSalary scans a block of text (pipe-separated) looking for salary numbers.
+// Returns the highest value found (in thousands) and the matching text snippet.
+func parseBestSalary(text string) (int, string) {
+	// Match patterns like: $350k, $350,000, $350K, 350000, 350k
+	numRe := regexp.MustCompile(`\$(\d[\d,]*)[kK]?|\b(\d{3,})[kK]\b|\b(\d{5,})\b`)
+
+	best := 0
+	bestSnippet := ""
+
+	for _, chunk := range strings.Split(text, "|||") {
+		chunk = strings.TrimSpace(chunk)
+		if chunk == "" {
+			continue
+		}
+		matches := numRe.FindAllStringSubmatch(chunk, -1)
+		for _, m := range matches {
+			var raw string
+			if m[1] != "" {
+				raw = strings.ReplaceAll(m[1], ",", "")
+			} else if m[2] != "" {
+				raw = m[2]
+			} else if m[3] != "" {
+				raw = m[3]
+			}
+			if raw == "" {
+				continue
+			}
+			val := 0
+			fmt.Sscanf(raw, "%d", &val)
+			// Normalise: if value looks like raw dollars (>= 10000), convert to thousands
+			if val >= 10000 {
+				val = val / 1000
+			}
+			// Sanity bounds: $30k–$2000k
+			if val < 30 || val > 2000 {
+				continue
+			}
+			if val > best {
+				best = val
+				// Trim the snippet to 40 chars for display
+				snippet := chunk
+				if len(snippet) > 40 {
+					snippet = snippet[:40] + "…"
+				}
+				bestSnippet = snippet
+			}
+		}
+	}
+	return best, bestSnippet
 }
 
 // Close closes the underlying database connection

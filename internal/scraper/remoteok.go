@@ -37,7 +37,7 @@ type remoteOKJob struct {
 	SalaryMax   int      `json:"salary_max"`
 }
 
-func (r *RemoteOKScraper) Scrape(ctx context.Context, query SearchQuery) ([]Job, error) {
+func (r *RemoteOKScraper) Scrape(ctx context.Context, query SearchQuery, onJobs func([]Job)) ([]Job, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, remoteOKAPIURL, nil)
 	if err != nil {
 		return nil, err
@@ -92,6 +92,9 @@ func (r *RemoteOKScraper) Scrape(ctx context.Context, query SearchQuery) ([]Job,
 			Remote:       true,
 			ScrapedAt:    time.Now(),
 		})
+	}
+	if onJobs != nil && len(jobs) > 0 {
+		onJobs(jobs)
 	}
 	return jobs, nil
 }

@@ -57,20 +57,34 @@ fi
 # 3. Native Ollama Engine & Model Check
 MODEL_NAME="qwen3:30b-a3b"
 if curl -s -f http://localhost:11434/api/tags > /dev/null; then
-    echo " ✅ Ollama LLM provider detected natively on port 11434."
-    echo " -> Verifying core model ($MODEL_NAME) is actively downloaded..."
-    if ! ollama list | grep -q "$MODEL_NAME"; then
-        echo " ⚠️ Core model ($MODEL_NAME) is missing locally."
-        echo " ⏳ Downloading model now (This may take several minutes depending on network)..."
-        ollama pull "$MODEL_NAME"
-        echo " ✅ Model downloaded successfully!"
-    else
-        echo " ✅ Core model ($MODEL_NAME) confirmed locally available."
-    fi
+    echo " ✅ Ollama already running on port 11434."
 else
-    echo "⚠️  WARNING: Ollama is not actively running on localhost:11434!"
-    echo "Make sure Ollama is open natively on your host machine to compile Resumes."
-    echo ""
+    echo " ⚡ Ollama not detected — starting ollama serve in background..."
+    ollama serve > /tmp/ollama.log 2>&1 &
+    OLLAMA_PID=$!
+    echo " -> Waiting for Ollama to become ready (PID $OLLAMA_PID)..."
+    WAIT=0
+    until curl -s -f http://localhost:11434/api/tags > /dev/null 2>&1; do
+        if [ $WAIT -ge 30 ]; then
+            echo " ⚠️  Ollama did not respond within 30s — continuing anyway (check /tmp/ollama.log)"
+            break
+        fi
+        sleep 1
+        WAIT=$((WAIT + 1))
+    done
+    if curl -s -f http://localhost:11434/api/tags > /dev/null 2>&1; then
+        echo " ✅ Ollama is ready."
+    fi
+fi
+
+echo " -> Verifying core model ($MODEL_NAME) is actively downloaded..."
+if ! ollama list | grep -q "$MODEL_NAME"; then
+    echo " ⚠️  Core model ($MODEL_NAME) is missing locally."
+    echo " ⏳ Downloading model now (this may take several minutes)..."
+    ollama pull "$MODEL_NAME"
+    echo " ✅ Model downloaded successfully!"
+else
+    echo " ✅ Core model ($MODEL_NAME) confirmed locally available."
 fi
 
 # 4. Check for .gitignore security block
