@@ -30,3 +30,7 @@ _bmad/
 
 # experience
 experience/
+
+#db
+data/jobs.db
+data/sessions.db
