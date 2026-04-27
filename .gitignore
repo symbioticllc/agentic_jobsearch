@@ -32,5 +32,6 @@ _bmad/
 experience/
 
 #db
-data/jobs.db
-data/sessions.db
+*jobs.db
+*sessions.db
+
