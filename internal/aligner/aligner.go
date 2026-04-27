@@ -80,9 +80,13 @@ func (a *Aligner) TailorResume(ctx context.Context, job scraper.Job, baseResume 
 		jdSnippet = jdSnippet[:2000]
 	}
 
-	ragResults, err := a.rag.QueryRelevant(ctx, "project_history", jdSnippet, 5)
-	if err != nil {
-		return result, fmt.Errorf("rag query failed: %w", err)
+	// RAG context enrichment is best-effort: if the embedding model is cold-loading
+	// or Redis is temporarily unavailable, we still want tailoring to succeed.
+	// An empty context means the LLM uses only the Base Resume — still fully functional.
+	ragResults, ragErr := a.rag.QueryRelevant(ctx, "project_history", jdSnippet, 5)
+	if ragErr != nil {
+		fmt.Printf("⚠️  RAG context lookup skipped (non-fatal): %v\n", ragErr)
+		ragResults = nil
 	}
 
 	var contextBuf strings.Builder
