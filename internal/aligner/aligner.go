@@ -225,7 +225,7 @@ REPORT:
 	// Step 1: Locate the RESUME section boundary — find LAST occurrence
 	//         of "RESUME" or "RESUME:" on its own line.
 	resumeIdx := -1
-	reResumeMarker := regexp.MustCompile(`(?im)^RESUME[:\s]*$`)
+	reResumeMarker := regexp.MustCompile(`(?im)^(?:\*\*|##\s*|---\s*)?RESUME[:\s\*\-]*$`)
 	allMatches := reResumeMarker.FindAllStringIndex(response, -1)
 	if len(allMatches) > 0 {
 		resumeIdx = allMatches[len(allMatches)-1][0] // use the LAST match
@@ -243,7 +243,7 @@ REPORT:
 			if loc := reEnd.FindStringIndex(resumeBody); loc != nil {
 				resumeBody = resumeBody[:loc[0]]
 			}
-			reRpt := regexp.MustCompile(`(?im)^REPORT[:\s]*$`)
+			reRpt := regexp.MustCompile(`(?im)^(?:\*\*|##\s*|---\s*)?REPORT[:\s\*\-]*$`)
 			if loc := reRpt.FindStringIndex(resumeBody); loc != nil {
 				resumeBody = resumeBody[:loc[0]]
 			}
@@ -260,7 +260,7 @@ REPORT:
 	if resumeIdx > 0 {
 		preResume = response[:resumeIdx]
 	}
-	reCLMarker := regexp.MustCompile(`(?im)^(?:COVER[_ ]?LETTER|---\s*COVER[_ ]?LETTER\s*---)[:\s]*$`)
+	reCLMarker := regexp.MustCompile(`(?im)^(?:\*\*|##\s*|---\s*)?COVER[_ ]?LETTER[:\s\*\-]*$`)
 	clLoc := reCLMarker.FindStringIndex(preResume)
 	if clLoc != nil {
 		// Cover letter body = everything after the CL marker until the RESUME boundary
@@ -268,7 +268,7 @@ REPORT:
 		result.CoverLetter = cleanMarkdownTraces(strings.TrimSpace(afterCL))
 	} else {
 		// Fallback: look for "Cover Letter" as a heading (bold or plain)
-		reCLHeading := regexp.MustCompile(`(?im)^(?:\*\*\s*)?cover\s+letter(?:\s*\*\*)?[:\s]*$`)
+		reCLHeading := regexp.MustCompile(`(?im)^(?:\*\*|##\s*)?cover\s+letter[:\s\*\-]*$`)
 		clLocH := reCLHeading.FindStringIndex(preResume)
 		if clLocH != nil {
 			afterCL := preResume[clLocH[1]:]
@@ -277,7 +277,7 @@ REPORT:
 	}
 
 	// Step 4: Extract REPORT — everything after the REPORT marker
-	reRPMarker := regexp.MustCompile(`(?im)^(?:REPORT|---\s*REPORT\s*---)[:\s]*$`)
+	reRPMarker := regexp.MustCompile(`(?im)^(?:\*\*|##\s*|---\s*)?REPORT[:\s\*\-]*$`)
 	rpLoc := reRPMarker.FindStringIndex(response)
 	if rpLoc != nil {
 		result.Report = strings.TrimSpace(response[rpLoc[1]:])
@@ -368,7 +368,7 @@ func stripMetadataFromResume(resume string) string {
 
 	lines := strings.Split(resume, "\n")
 	// Known metadata headers that should never appear in a resume body
-	metaHeaders := regexp.MustCompile(`(?i)^\s*(SCORE|SUB[_ ]?SCORES?|BRIEF|MARKET[_ ]?SALARY|COVER[_ ]?LETTER|WHY YOU FIT|FIT BRIEF|---\s*END[_ ]?RESUME|---\s*COVER|---\s*REPORT)[:\s]*$`)
+	metaHeaders := regexp.MustCompile(`(?i)^\s*(?:\*\*|##\s*)?(SCORE|SUB[_ ]?SCORES?|BRIEF|MARKET[_ ]?SALARY|COVER[_ ]?LETTER|WHY YOU FIT|FIT BRIEF|---\s*END[_ ]?RESUME|---\s*COVER|---\s*REPORT)[:\s\*\-]*$`)
 	// Lines that look like sub-score detail lines (e.g. "Technical: 95" or "• Technical: 95 (...)")
 	metaScoreLine := regexp.MustCompile(`(?i)^\s*[•\-\*]?\s*(Technical|Domain|Seniority)[:\s]+\d+`)
 	// Pipe-separated score summary line

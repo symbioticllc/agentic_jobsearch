@@ -17,11 +17,11 @@ import (
 )
 
 // Two-tier model architecture:
-//   ClassFast → fastModelName (qwen3:8b)  — bulk extraction, pre-scoring
-//   ClassDeep → deepModelName (qwen3:30b-a3b) — resume tailoring, cover letters
+//   ClassFast → fastModelName (gemma4:e4b)  — bulk extraction, pre-scoring
+//   ClassDeep → deepModelName (gemma4:e4b) — resume tailoring, cover letters
 const (
-	DefaultFastModel = "qwen3:8b"
-	DefaultDeepModel = "qwen3:30b-a3b"
+	DefaultFastModel = "gemma4:e4b"
+	DefaultDeepModel = "gemma4:e4b"
 )
 
 var (

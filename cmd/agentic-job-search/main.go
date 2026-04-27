@@ -11,10 +11,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/ledongthuc/pdf"
@@ -223,10 +225,35 @@ func main() {
 	mux.HandleFunc("GET /api/models", srv.handleListModels)
 	mux.HandleFunc("POST /api/models/configure", authMiddleware(srv.handleConfigureModels))
 
-	fmt.Printf("\n✅ SaaS Architecture online! Available at http://localhost%s\n", port)
-	if err := http.ListenAndServe(port, mux); err != nil {
-		log.Fatalf("Server failed: %v", err)
+	srvHTTP := &http.Server{
+		Addr:    port,
+		Handler: mux,
 	}
+
+	go func() {
+		fmt.Printf("\n✅ SaaS Architecture online! Available at http://localhost%s\n", port)
+		if err := srvHTTP.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Server failed: %v", err)
+		}
+	}()
+
+	// Graceful Shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+	<-quit
+	fmt.Println("\n🛑 Shutting down server gracefully...")
+
+	// Signal all background tasks
+	cancel()
+
+	// Wait up to 10 seconds for active requests to finish
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+	if err := srvHTTP.Shutdown(shutdownCtx); err != nil {
+		log.Fatalf("Server forced to shutdown: %v", err)
+	}
+
+	fmt.Println("✅ Graceful shutdown complete")
 }
 
 // authMiddleware intercepts requests and asserts Tenant contextual boundaries

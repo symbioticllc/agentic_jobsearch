@@ -55,7 +55,7 @@ else
 fi
 
 # 3. Native Ollama Engine & Model Check
-MODEL_NAME="qwen3:30b-a3b"
+MODEL_NAME="gemma4:e4b"
 if curl -s -f http://localhost:11434/api/tags > /dev/null; then
     echo " ✅ Ollama already running on port 11434."
 else
