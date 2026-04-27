@@ -150,8 +150,41 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (!r.ok) throw new Error(await r.text());
                 return r.json();
             })
-            .then(data => { availableResumes = data || []; })
+            .then(data => { 
+                availableResumes = data || []; 
+                renderManageUploadsList();
+            })
             .catch(e => console.error("Could not fetch resumes", e));
+    }
+
+    function renderManageUploadsList() {
+        const tbody = document.getElementById('resume-manage-list');
+        if (!tbody) return;
+        if (availableResumes.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; padding: 1rem; color: var(--text-muted);">No uploads found.</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = availableResumes.map(r => `
+            <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                <td style="padding: 0.5rem; color: ${r.file_type === 'resume' ? '#60a5fa' : '#c084fc'}; font-weight: 600;">${r.file_type === 'resume' ? '📄 Resume' : '💡 Brag Sheet'}</td>
+                <td style="padding: 0.5rem;">${r.name}</td>
+                <td style="padding: 0.5rem; color: var(--text-muted); font-size: 0.8rem;">${new Date(r.created_at).toLocaleDateString()}</td>
+                <td style="padding: 0.5rem; text-align: right;">
+                    <button class="delete-resume-btn secondary-btn" data-id="${r.id}" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; border-color: rgba(239,68,68,0.3); color: #f87171;">Delete</button>
+                </td>
+            </tr>
+        `).join('');
+
+        document.querySelectorAll('.delete-resume-btn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                const id = e.target.getAttribute('data-id');
+                if (confirm('Delete this upload permanently?')) {
+                    const res = await fetch('/api/resumes/' + id, { method: 'DELETE' });
+                    if (res.ok) fetchResumes();
+                }
+            });
+        });
     }
 
     // Event Listeners for Profile Modal
@@ -163,6 +196,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await res.json();
             if (data.linkedin_url) document.getElementById('linkedin-url-input').value = data.linkedin_url;
         } catch(e) {}
+
+        fetchResumes();
 
         // Populate model dropdowns
         try {
@@ -872,7 +907,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         </button>
                         ${availableResumes.length > 1 ? `
                             <select id="resume-template-select" style="background: rgba(255,255,255,0.05); color: white; border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; padding: 0.4rem 0.5rem; font-size: 0.8rem;">
-                                ${availableResumes.map(r => `<option style="color: #333;" value="${r}">${r}</option>`).join('')}
+                                ${availableResumes.map(r => `<option style="color: #333;" value="${r.id}">${r.name}</option>`).join('')}
                             </select>
                         ` : ''}
                         
@@ -1159,7 +1194,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (selectBox) {
             templateQuery = "?template=" + encodeURIComponent(selectBox.value);
         } else if (availableResumes.length === 1) {
-            templateQuery = "?template=" + encodeURIComponent(availableResumes[0]);
+            templateQuery = "?template=" + encodeURIComponent(availableResumes[0].id);
         } else {
             templateQuery = "?template=base_resume.md";
         }

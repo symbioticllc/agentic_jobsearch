@@ -117,6 +117,16 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 	)`)
 	db.Exec("CREATE INDEX IF NOT EXISTS idx_th_job ON tailoring_history(job_id, user_id)")
 
+	// User Resumes — versioned storage of uploaded resumes and bragsheets
+	db.Exec(`CREATE TABLE IF NOT EXISTS user_resumes (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id TEXT NOT NULL,
+		name TEXT NOT NULL,
+		file_type TEXT NOT NULL,
+		content TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`)
+
 	// Backfill FTS index for any existing DB records if the index is brand new
 	var ftsCount int
 	db.QueryRow("SELECT COUNT(*) FROM jobs_fts").Scan(&ftsCount)
@@ -434,6 +444,65 @@ func (s *SQLiteStore) GetSetting(userID string, key string) (string, error) {
 		return "", nil // Safely return empty if setting hasn't been mapped yet
 	}
 	return val, err
+}
+
+// UserResume represents a versioned resume or bragsheet uploaded by the user
+type UserResume struct {
+	ID        int    `json:"id"`
+	UserID    string `json:"user_id"`
+	Name      string `json:"name"`
+	FileType  string `json:"file_type"`
+	Content   string `json:"content,omitempty"`
+	CreatedAt string `json:"created_at"`
+}
+
+// SaveUserResume inserts a new version of a user's resume/bragsheet
+func (s *SQLiteStore) SaveUserResume(userID, name, fileType, content string) (int, error) {
+	res, err := s.db.Exec(`
+		INSERT INTO user_resumes (user_id, name, file_type, content)
+		VALUES (?, ?, ?, ?)
+	`, userID, name, fileType, content)
+	if err != nil {
+		return 0, err
+	}
+	id, err := res.LastInsertId()
+	return int(id), err
+}
+
+// ListUserResumes returns all uploaded resumes/bragsheets for a user (without content)
+func (s *SQLiteStore) ListUserResumes(userID string) ([]UserResume, error) {
+	rows, err := s.db.Query(`
+		SELECT id, user_id, name, file_type, created_at
+		FROM user_resumes
+		WHERE user_id = ?
+		ORDER BY created_at DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var resumes []UserResume
+	for rows.Next() {
+		var r UserResume
+		if err := rows.Scan(&r.ID, &r.UserID, &r.Name, &r.FileType, &r.CreatedAt); err == nil {
+			resumes = append(resumes, r)
+		}
+	}
+	return resumes, nil
+}
+
+// DeleteUserResume deletes a specific resume by its ID and userID
+func (s *SQLiteStore) DeleteUserResume(userID string, id string) error {
+	_, err := s.db.Exec(`DELETE FROM user_resumes WHERE id = ? AND user_id = ?`, id, userID)
+	return err
+}
+
+// GetUserResumeContent retrieves the raw markdown content of a resume
+func (s *SQLiteStore) GetUserResumeContent(userID string, id string) (string, error) {
+	var content string
+	err := s.db.QueryRow(`SELECT content FROM user_resumes WHERE id = ? AND user_id = ?`, id, userID).Scan(&content)
+	return content, err
 }
 
 // CompanyReportRow contains per-company scrape statistics for a tenant

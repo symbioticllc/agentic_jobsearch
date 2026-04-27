@@ -62,6 +62,21 @@ func (r *RAG) IngestDocument(ctx context.Context, collectionName string, filePat
 	chunks := ChunkDocument(filePath, cleanRaw)
 	fmt.Printf(" -> Created %d chunks from %s\n", len(chunks), filePath)
 
+	return r.IngestChunks(ctx, collectionName, chunks)
+}
+
+// IngestText takes raw markdown text directly from memory, chunks it, and upserts into Redis.
+func (r *RAG) IngestText(ctx context.Context, collectionName string, sourceID string, content string) (int, error) {
+	fmt.Printf(" -> Chunking text document in memory: %s\n", sourceID)
+	cleanRaw := sanitizeForEmbedding(content)
+	chunks := ChunkDocument(sourceID, cleanRaw)
+	fmt.Printf(" -> Created %d chunks from %s\n", len(chunks), sourceID)
+
+	return r.IngestChunks(ctx, collectionName, chunks)
+}
+
+// IngestChunks generates embeddings for pre-chunked data and upserts them
+func (r *RAG) IngestChunks(ctx context.Context, collectionName string, chunks []Chunk) (int, error) {
 	if len(chunks) == 0 {
 		return 0, fmt.Errorf("no chunks produced from document — check file format")
 	}

@@ -1,0 +1,222 @@
+{
+  "main": {
+    "id": "858de30621bea2ec",
+    "type": "split",
+    "children": [
+      {
+        "id": "6704fb76a125c0ac",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "76dc953a5332513a",
+            "type": "leaf",
+            "state": {
+              "type": "empty",
+              "state": {},
+              "icon": "lucide-file",
+              "title": "New tab"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "c8851b5fe7ef5e3a",
+    "type": "split",
+    "children": [
+      {
+        "id": "24a946555bdabda1",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "6b6c8856a2a5087d",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "59439c8cb4b1384e",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "52ba524cb97532b5",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      },
+      {
+        "id": "1cd721b86d4927af",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "5b1e19e216ed4fdb",
+            "type": "leaf",
+            "state": {
+              "type": "graph",
+              "state": {},
+              "icon": "lucide-git-fork",
+              "title": "Graph view"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "cda31a0fc7d6f57c",
+    "type": "split",
+    "children": [
+      {
+        "id": "e0a511491ef17af2",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "ef3209c220c1666e",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "AgenticJobSearch/Welcome.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks for Welcome"
+            }
+          },
+          {
+            "id": "81dfedfe1a36dfc1",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "AgenticJobSearch/Welcome.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links from Welcome"
+            }
+          },
+          {
+            "id": "c53e5b71f6b6a2db",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "ad5ef88adcaf9177",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "All properties"
+            }
+          },
+          {
+            "id": "079d0f498686c0f7",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "AgenticJobSearch/Welcome.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline of Welcome"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false
+    }
+  },
+  "active": "5b1e19e216ed4fdb",
+  "lastOpenFiles": [
+    "_bmad/bmm/1-analysis/bmad-document-project/templates/index-template.md",
+    "experience/info@symbiotic.us/brag_sheet.md",
+    "experience/info@symbiotic.us/2026.Mike.Lee.Resume.md",
+    "project_history.md",
+    "ipaddresses.md",
+    "base_resume.md",
+    "README.md",
+    "_bmad/bmm/1-analysis/bmad-document-project/workflows/deep-dive-instructions.md",
+    "_bmad/bmm/1-analysis/bmad-agent-tech-writer/write-document.md",
+    "_bmad/bmm/1-analysis/bmad-agent-tech-writer/validate-doc.md",
+    "_bmad/bmm/1-analysis/bmad-agent-tech-writer/SKILL.md",
+    "_bmad/bmm/1-analysis/bmad-agent-tech-writer/mermaid-gen.md",
+    "_bmad/bmm/1-analysis/bmad-agent-analyst/SKILL.md",
+    "_bmad/bmm/4-implementation/bmad-agent-quick-flow-solo-dev/SKILL.md",
+    "_bmad/bmm/4-implementation/bmad-agent-qa/SKILL.md",
+    "_bmad/bmm/4-implementation/bmad-agent-dev/SKILL.md",
+    "_bmad/bmm/3-solutioning/bmad-check-implementation-readiness/steps/step-02-prd-analysis.md",
+    "_bmad/bmm/3-solutioning/bmad-check-implementation-readiness/steps/step-01-document-discovery.md",
+    "_bmad/bmm/3-solutioning/bmad-check-implementation-readiness/steps/step-03-epic-coverage-validation.md",
+    "_bmad/bmm/3-solutioning/bmad-agent-architect/SKILL.md",
+    "_bmad/bmm/1-analysis/bmad-agent-tech-writer/explain-concept.md"
+  ]
+}

@@ -207,6 +207,7 @@ func main() {
 	mux.HandleFunc("POST /api/export/gdocs/{id}", authMiddleware(srv.handleGoogleDocsExport))
 	mux.HandleFunc("GET /api/jobs/search", authMiddleware(srv.handleSearchJobs))
 	mux.HandleFunc("GET /api/resumes", authMiddleware(srv.handleListResumes))
+	mux.HandleFunc("DELETE /api/resumes/{id}", authMiddleware(srv.handleDeleteResume))
 	
 	// Profile Settings Routes
 	mux.HandleFunc("GET /api/profile", authMiddleware(srv.handleGetProfile))
@@ -404,27 +405,20 @@ func (s *server) handleUploadProfileFile(w http.ResponseWriter, r *http.Request)
 	}
 
 	userID := r.Context().Value("user_id").(string)
-	tenantDir := filepath.Join("./experience", userID)
-	if err := os.MkdirAll(tenantDir, 0755); err != nil {
-		http.Error(w, "Failed to provision tenant storage", http.StatusInternalServerError)
+
+	id, err := s.db.SaveUserResume(userID, filepath.Base(baseFileName), fileType, rawMarkdown)
+	if err != nil {
+		http.Error(w, "Failed to save file to database", http.StatusInternalServerError)
 		return
 	}
 
-	var outPath string
-	if fileType == "bragsheet" {
-		outPath = filepath.Join(tenantDir, "brag_sheet.md")
-		err := os.WriteFile(outPath, []byte(rawMarkdown), 0644)
-		if err == nil && s.ragPipeline != nil {
-			tenantCollection := fmt.Sprintf("%s_project_history", userID)
-			go s.ragPipeline.IngestDocument(context.Background(), tenantCollection, outPath)
-		}
-	} else {
-		outPath = filepath.Join(tenantDir, filepath.Base(baseFileName))
-		os.WriteFile(outPath, []byte(rawMarkdown), 0644)
+	if fileType == "bragsheet" && s.ragPipeline != nil {
+		tenantCollection := fmt.Sprintf("%s_project_history", userID)
+		go s.ragPipeline.IngestText(context.Background(), tenantCollection, baseFileName, rawMarkdown)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "uploaded", "path": outPath})
+	json.NewEncoder(w).Encode(map[string]interface{}{"status": "uploaded", "id": id, "name": baseFileName})
 }
 
 // GET /api/jobs
@@ -637,19 +631,32 @@ func (s *server) handleVectorizeJobs(w http.ResponseWriter, r *http.Request) {
 // GET /api/resumes
 func (s *server) handleListResumes(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value("user_id").(string)
-	tenantDir := filepath.Join("./experience", userID)
-
-	var resumes []string
-	entries, err := os.ReadDir(tenantDir)
-	if err == nil {
-		for _, e := range entries {
-			if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
-				resumes = append(resumes, e.Name())
-			}
-		}
+	
+	resumes, err := s.db.ListUserResumes(userID)
+	if err != nil {
+		http.Error(w, "Failed to load resumes", http.StatusInternalServerError)
+		return
 	}
+	if resumes == nil {
+		resumes = []store.UserResume{}
+	}
+	
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resumes)
+}
+
+// DELETE /api/resumes/{id}
+func (s *server) handleDeleteResume(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	userID := r.Context().Value("user_id").(string)
+
+	if err := s.db.DeleteUserResume(userID, id); err != nil {
+		http.Error(w, "Failed to delete resume", http.StatusInternalServerError)
+		return
+	}
+	
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
 }
 
 // POST /api/jobs/tailor/{id}
@@ -667,23 +674,20 @@ func (s *server) handleTailorJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	templateName := r.URL.Query().Get("template")
-	if templateName == "" {
-		templateName = "base_resume.md"
-	}
+	templateID := r.URL.Query().Get("template")
+	var baseResumeRaw string
 	
-	// Directory traversal protection explicitly isolated within Tenant Box
-	templatePath := filepath.Join("./experience", userID, templateName)
-	baseResumeRaw, err := os.ReadFile(templatePath)
-	if err != nil {
-		baseResumeRaw, err = os.ReadFile(filepath.Join(".", templateName))
+	if templateID != "" {
+		baseResumeRaw, err = s.db.GetUserResumeContent(userID, templateID)
 	}
-	if err != nil {
-		baseResumeRaw, err = os.ReadFile(projectHistoryPath)
-	}
-	if err != nil {
-		http.Error(w, "No resume found. Please upload a base resume via User Profile & Setup.", http.StatusUnprocessableEntity)
-		return
+	if err != nil || templateID == "" {
+		// Fallback to project history if no DB resume provided
+		b, err2 := os.ReadFile(projectHistoryPath)
+		if err2 != nil {
+			http.Error(w, "No resume found in DB and no fallback project_history.md exists. Please upload a base resume via User Profile & Setup.", http.StatusUnprocessableEntity)
+			return
+		}
+		baseResumeRaw = string(b)
 	}
 
 	if s.ragPipeline == nil {

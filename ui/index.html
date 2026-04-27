@@ -325,6 +325,29 @@
 
                 <hr style="border:none; border-top:1px solid rgba(255,255,255,0.08);">
 
+                <!-- Manage Uploads -->
+                <div class="modal-field-group">
+                    <label>Manage Uploads</label>
+                    <p>View and delete your uploaded resumes and brag sheets.</p>
+                    <div style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; max-height: 200px; overflow-y: auto;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+                            <thead style="background: rgba(255,255,255,0.05); position: sticky; top: 0;">
+                                <tr style="text-align: left; color: var(--text-muted);">
+                                    <th style="padding: 0.5rem;">Type</th>
+                                    <th style="padding: 0.5rem;">Name</th>
+                                    <th style="padding: 0.5rem;">Uploaded At</th>
+                                    <th style="padding: 0.5rem; text-align: right;">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="resume-manage-list">
+                                <tr><td colspan="4" style="text-align: center; padding: 1rem; color: var(--text-muted);">No uploads found.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <hr style="border:none; border-top:1px solid rgba(255,255,255,0.08);">
+
                 <!-- LLM Model Configuration -->
                 <div class="modal-field-group">
                     <label>🧠 LLM Model Configuration</label>
